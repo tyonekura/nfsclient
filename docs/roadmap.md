@@ -2,12 +2,13 @@
 
 ## Goals
 
-1. **RFC Compliance Testing** — Verify that an NFSv3 server correctly implements RFC 1813:
-   correct error codes, write consistency data (WCC), COMMIT semantics, attribute accuracy,
-   and proper handling of edge cases and malformed inputs.
+1. **RFC Compliance Testing** — Verify that an NFS server correctly implements the
+   relevant RFC: error codes, consistency guarantees, attribute accuracy, and proper
+   handling of edge cases. Covers both NFSv3 (RFC 1813) and NFSv4.0 (RFC 7530).
 
 2. **Performance Benchmarking** — Measure NFS server performance: per-operation latency,
    read/write throughput, IOPS, and how each scales with request size and concurrency.
+   Benchmarks run against both protocol versions so results can be compared directly.
 
 ---
 
@@ -16,6 +17,7 @@
 | Area | Status |
 |------|--------|
 | NFSv3 procedures | 3 of 22: LOOKUP, READ, WRITE |
+| NFSv4 support | None |
 | MOUNT protocol | MNT only |
 | Authentication | AUTH_NONE only |
 | RPC records | Single-fragment only |
@@ -269,7 +271,273 @@ Identifies the server's saturation point.
 
 ---
 
+---
+
+## Phase 4 — NFSv4.0 Client
+
+*Adds NFSv4.0 (RFC 7530) support. The target server implements NFSv4.0 on the same
+port 2049 as NFSv3 with no separate MOUNT step. All NFSv4 traffic is a single RPC
+procedure — COMPOUND (proc 1, prog 100003, vers 4) — that carries a sequence of
+sub-operations in one call.*
+
+### Protocol differences from NFSv3
+
+| Aspect | NFSv3 | NFSv4.0 |
+|--------|-------|---------|
+| Transport | MOUNT + NFS on port 2049 | NFS only on port 2049; no MOUNT |
+| RPC structure | One procedure per operation | COMPOUND: N sub-ops per call |
+| File handles | Obtained via MOUNT MNT3 | Obtained via PUTROOTFH + LOOKUP |
+| Attributes | Fixed `fattr3` struct | Bitmap-selected `fattr4` in opaque |
+| State | Stateless | Stateful: client ID, open stateids, leases |
+| Locking | NLM side protocol | Built-in LOCK/LOCKT/LOCKU |
+| Delegations | None | Read + write, server-initiated recall |
+
+### 4.1 COMPOUND frame builder
+
+The foundation of all NFSv4 work. A `CompoundBuilder` composes sub-operations
+into a single COMPOUND call and decodes the matched reply sequence.
+
+```cpp
+auto reply = compound(client)
+    .putrootfh()
+    .lookup("dir")
+    .getfh()
+    .getattr({FATTR4_SIZE, FATTR4_MODE})
+    .call();
+```
+
+Internally encodes:
+- Header: `minorversion=0`, `tag` (arbitrary label), `argarray` length
+- Each op: `op_code (uint32)` + op-specific XDR arguments
+- Decodes reply array positionally; stops on first non-OK status per RFC 7530 §15.2.3
+
+### 4.2 fattr4 attribute codec
+
+NFSv4 attributes are bitmap-selected: the request carries a `bitmap4` (variable-length
+array of uint32 bitmasks) and the reply packs only the requested attributes into a
+single opaque, in bitmap order.
+
+Two attribute classes:
+- **Mandatory** (server must support): `type`, `change`, `size`, `fsid`, `fileid`,
+  `mode`, `numlinks`, `owner`, `owner_group`, `space_used`, `time_access`,
+  `time_metadata`, `time_modify`, `mounted_on_fileid`
+- **Recommended** (server may support): `time_create`, `acl`, `hidden`, `system`, etc.
+
+The codec needs:
+- `Bitmap4` — encode/decode a set of attribute IDs
+- `Fattr4Encoder` — given a set of attr values, encode into the opaque
+- `Fattr4Decoder` — given a bitmap + opaque, decode each present attribute
+
+### 4.3 Client ID and lease management
+
+NFSv4 is stateful. Before any OPEN the client must establish a client ID:
+
+```
+COMPOUND([SETCLIENTID(verifier, client_string)]) → clientid4 + confirm_verifier
+COMPOUND([SETCLIENTID_CONFIRM(clientid4, confirm_verifier)]) → OK
+```
+
+The server expires the client ID if no operation is received within the lease period
+(90 s on the target server). The `Nfs4Client` class must:
+- Store `clientid4` and renew it by sending any operation (or explicit RENEW)
+  before the lease expires
+- Regenerate a 64-bit verifier on each fresh mount (so the server detects restarts)
+- Handle `NFS4ERR_STALE_CLIENTID` by re-running SETCLIENTID/CONFIRM
+
+### 4.4 File handle operations and GETATTR
+
+The core navigation operations, all usable inside a COMPOUND:
+
+| Op | What it does |
+|----|-------------|
+| `PUTROOTFH` | Sets current FH to the export root (replaces MOUNT MNT3) |
+| `PUTFH(fh)` | Sets current FH to a known FH |
+| `GETFH` | Captures current FH into the reply (use after LOOKUP to get a stored FH) |
+| `LOOKUP(name)` | Traverses one component; updates current FH |
+| `LOOKUPP` | Traverses to parent directory |
+| `SAVEFH` / `RESTOREFH` | Save and restore current FH within a COMPOUND |
+| `GETATTR(bitmap)` | Returns selected `fattr4` attributes for current FH |
+| `ACCESS(mask)` | Returns which access rights are permitted |
+
+### 4.5 OPEN / CLOSE and stateid lifecycle
+
+NFSv4 READ and WRITE require a `stateid4` obtained from OPEN:
+
+```
+COMPOUND([PUTFH dir_fh, OPEN(seqid, access, deny, owner, UNCHECKED name, attrs)])
+  → current FH = file FH, stateid4, open_flags (RESULT_FLAGS_*)
+
+COMPOUND([PUTFH file_fh, OPEN_CONFIRM(stateid, seqid)])   # if new stateid
+  → confirmed stateid4
+
+COMPOUND([PUTFH file_fh, READ(stateid, offset, count)])
+COMPOUND([PUTFH file_h,  WRITE(stateid, offset, stable, data)])
+
+COMPOUND([PUTFH file_fh, CLOSE(seqid, stateid)])
+  → invalidated stateid4
+```
+
+The `Nfs4Client` manages the open state table so callers receive a simple
+`Nfs4FileHandle` with the stateid embedded.
+
+### 4.6 Remaining file system operations
+
+Once OPEN/CLOSE and GETATTR work, the remaining ops follow the same COMPOUND pattern:
+
+| Op | NFSv4 name | Notes |
+|----|-----------|-------|
+| Create file | `OPEN(..., CREATE, UNCHECKED/GUARDED/EXCLUSIVE4)` | Folded into OPEN |
+| Create dir/symlink | `CREATE(type, name, attrs)` | Separate from OPEN |
+| Remove | `REMOVE(name)` | On parent directory FH |
+| Rename | `SAVEFH`, `PUTFH dst_dir`, `RENAME(old, new)` | Two-FH operation via SAVEFH |
+| SETATTR | `SETATTR(stateid, bitmap, attrlist)` | Bitmap-based |
+| READDIR | `READDIR(cookie, cookieverf, dircount, maxcount, attr_request)` | Returns `dirlist4` |
+| READLINK | `READLINK` | On symlink FH |
+| COMMIT | `COMMIT(offset, count)` | Returns `writeverf4` |
+
+### 4.7 Byte-range locking
+
+The target server implements LOCK, LOCKT, LOCKU, and RELEASE_LOCKOWNER with
+cross-protocol conflict detection against NLM. The NFSv4 lock flow:
+
+```
+# First lock on a file requires a lock-owner stateid derived from the open stateid
+COMPOUND([PUTFH fh, LOCK(WRITE_LT, reclaim=false, offset, length,
+                         new_lock_owner{seqid, open_stateid, lock_owner})])
+  → lock_stateid4
+
+COMPOUND([PUTFH fh, LOCKU(WRITE_LT, seqid, lock_stateid, offset, length)])
+  → updated lock_stateid4
+
+COMPOUND([RELEASE_LOCKOWNER(lock_owner)])
+```
+
+Useful for verifying conflict detection, range splitting, and the shared/exclusive
+semantics defined in RFC 7530 §16.10.
+
+### 4.8 Delegations
+
+The target server grants read and write delegations and recalls them via the
+callback channel (CB_RECALL). Testing delegations requires a client that:
+
+1. Advertises a callback address in SETCLIENTID (`cb_client4`)
+2. Listens for incoming CB_COMPOUND calls on that address
+3. Processes CB_RECALL and calls DELEGRETURN
+
+This is the highest-complexity item. It involves an inbound TCP listener on the
+client side and is best deferred until the rest of the NFSv4 client is stable.
+
+### 4.9 `Nfs4Client` facade
+
+```cpp
+class Nfs4Client {
+public:
+    explicit Nfs4Client(const std::string& host, uint16_t port = 2049);
+
+    // Establish client ID with the server (call once before any file operation).
+    void setup();
+
+    Nfs4Fh  root();
+    Nfs4Fh  lookup(const Nfs4Fh& dir, const std::string& name);
+    Fattr4  getattr(const Nfs4Fh& fh, const Bitmap4& attrs);
+
+    Nfs4File open(const Nfs4Fh& dir, const std::string& name, OpenAccess access);
+    std::vector<uint8_t> read(Nfs4File& file, uint64_t offset, uint32_t count);
+    WriteResult4         write(Nfs4File& file, uint64_t offset, Stable4 stable,
+                               const uint8_t* data, size_t size);
+    void close(Nfs4File& file);
+
+    void create_dir(const Nfs4Fh& parent, const std::string& name);
+    void remove(const Nfs4Fh& parent, const std::string& name);
+    void rename(const Nfs4Fh& src_dir, const std::string& src_name,
+                const Nfs4Fh& dst_dir, const std::string& dst_name);
+
+    std::vector<DirEntry4> readdir(const Nfs4Fh& dir);
+
+    LockStateid lock(Nfs4File& file, LockType type, uint64_t offset, uint64_t length);
+    void unlock(Nfs4File& file, const LockStateid& sid, uint64_t offset, uint64_t length);
+};
+```
+
+---
+
+## Phase 5 — NFSv4 Compliance Tests
+
+*RFC 7530 compliance checks. Uses `nfsclient_compliance --version 4`.*
+
+### 5.1 COMPOUND semantics — RFC 7530 §14.2
+
+| Test | What is checked |
+|------|----------------|
+| Error stops compound | Op N fails → ops N+1…end not executed, their status = `NFS4ERR_OP_ILLEGAL` (actually not executed, reply has results only up to failed op) |
+| Tag echoed | Reply `tag` equals request `tag` |
+| Empty compound | Zero ops → `NFS4_OK` |
+
+### 5.2 Client ID lifecycle — RFC 7530 §16.33–16.34
+
+| Test | What is checked |
+|------|----------------|
+| SETCLIENTID + CONFIRM | Returns valid `clientid4`; subsequent ops accepted |
+| Duplicate SETCLIENTID (same verifier) | Returns same `clientid4` |
+| Fresh verifier | Returns new `clientid4`; old one invalidated |
+| Stale clientid in RENEW | Returns `NFS4ERR_STALE_CLIENTID` |
+
+### 5.3 Open/close stateid lifecycle — RFC 7530 §16.16–16.2
+
+| Test | What is checked |
+|------|----------------|
+| OPEN read-only | Stateid valid for READ, rejected for WRITE |
+| OPEN write-only | Stateid valid for WRITE, rejected for READ |
+| OPEN read-write | Stateid valid for both |
+| OPEN GUARDED duplicate | Returns `NFS4ERR_EXIST` |
+| OPEN EXCLUSIVE idempotency | Same verifier → same stateid |
+| READ with wrong stateid | Returns `NFS4ERR_BAD_STATEID` |
+| READ after CLOSE | Returns `NFS4ERR_BAD_STATEID` |
+
+### 5.4 fattr4 mandatory attributes — RFC 7530 §5.8
+
+| Test | What is checked |
+|------|----------------|
+| `type` after CREATE | Regular file = `NF4REG`; directory = `NF4DIR` |
+| `size` after WRITE | Matches bytes written |
+| `change` advances | Increments after each mutation |
+| `time_modify` after WRITE | Advances |
+| `numlinks` after hard link / remove | Correct count |
+| `owner` / `owner_group` | Non-empty strings returned |
+| `supported_attrs` | Contains all mandatory IDs |
+
+### 5.5 Stale file handle — RFC 7530 §4.2.4
+
+| Test | What is checked |
+|------|----------------|
+| GETATTR on deleted file | Returns `NFS4ERR_STALE` |
+| READ with stale stateid | Returns `NFS4ERR_STALE` or `NFS4ERR_BAD_STATEID` |
+| LOOKUP in deleted dir | Returns `NFS4ERR_STALE` |
+
+### 5.6 Byte-range locking — RFC 7530 §16.10–16.12
+
+| Test | What is checked |
+|------|----------------|
+| Exclusive lock, same owner retry | Succeeds (upgrade) |
+| Exclusive lock conflict | Returns `NFS4ERR_LOCK_NOTSUPP` or `NFS4ERR_DENIED` |
+| LOCKT on free range | Returns lock denied = false |
+| LOCKT on locked range | Returns `NFS4ERR_DENIED` with conflicting range |
+| LOCKU releases range | Subsequent LOCKT shows free |
+| Write with active lock | Allowed for lock holder |
+
+### 5.7 RENAME two-directory atomicity — RFC 7530 §16.24
+
+| Test | What is checked |
+|------|----------------|
+| Source disappears | LOOKUP(src_name) → `NFS4ERR_NOENT` |
+| Destination appears | LOOKUP(dst_name) → correct FH |
+| `change` on both dirs | Both parent directories show updated `change` attr |
+
+---
+
 ## Summary Table
+
+
 
 | # | Item | Goal | Priority |
 |---|------|------|----------|
@@ -305,3 +573,19 @@ Identifies the server's saturation point.
 | 3.6 | Metadata benchmark | Bench | P3 |
 | 3.7 | Mixed read/write benchmark | Bench | P3 |
 | 3.8 | Latency vs. concurrency curve | Bench | P3 |
+| 4.1 | COMPOUND frame builder | Both | P2 |
+| 4.2 | fattr4 bitmap codec | Both | P2 |
+| 4.3 | Client ID + lease management | Both | P2 |
+| 4.4 | FH ops + GETATTR + ACCESS | Both | P2 |
+| 4.5 | OPEN / CLOSE / READ / WRITE | Both | P2 |
+| 4.6 | CREATE / REMOVE / RENAME / READDIR / SETATTR / COMMIT | Both | P3 |
+| 4.7 | Byte-range locking (LOCK/LOCKT/LOCKU) | Compliance | P3 |
+| 4.8 | Delegations + callback listener | Compliance | P4 |
+| 4.9 | `Nfs4Client` facade | Both | P2 |
+| 5.1 | COMPOUND semantics tests | Compliance | P3 |
+| 5.2 | Client ID lifecycle tests | Compliance | P3 |
+| 5.3 | Open/close stateid tests | Compliance | P3 |
+| 5.4 | fattr4 mandatory attribute tests | Compliance | P3 |
+| 5.5 | Stale FH tests (NFSv4) | Compliance | P3 |
+| 5.6 | Byte-range locking tests | Compliance | P4 |
+| 5.7 | RENAME atomicity tests | Compliance | P4 |
