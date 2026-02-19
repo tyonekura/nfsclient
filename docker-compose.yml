@@ -1,0 +1,45 @@
+services:
+  nfsd:
+    build:
+      context: ../project
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        mkdir -p /export/subdir
+        echo 'Hello from NFS' > /export/hello.txt
+        echo 'Nested content' > /export/subdir/nested.txt
+        echo 'initial content here' > /export/writable.txt
+        rpcbind
+        sleep 1
+        exec /app/build/nfsd --export /export --port 2049
+    networks:
+      - nfs-test
+
+  test:
+    build:
+      context: .
+    volumes:
+      - .:/src
+    depends_on:
+      - nfsd
+    environment:
+      NFS_SERVER: nfsd
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        cmake -B build -DCMAKE_BUILD_TYPE=Debug
+        cmake --build build -j$(nproc)
+        echo 'Waiting for nfsd to be ready...'
+        until bash -c 'echo > /dev/tcp/nfsd/2049' 2>/dev/null; do sleep 1; done
+        echo 'nfsd is up, running integration tests...'
+        exec ./build/tests/nfsclient_integration_tests
+    networks:
+      - nfs-test
+
+networks:
+  nfs-test:
+    driver: bridge

@@ -1,6 +1,6 @@
 IMAGE := nfsclient-build
 
-.PHONY: build test shell docker-image clean
+.PHONY: build test shell docker-image clean integration-test
 
 docker-image:
 	docker build -t $(IMAGE) .
@@ -15,6 +15,10 @@ test: build
 
 shell: docker-image
 	docker run --rm -it -v "$(CURDIR)":/src $(IMAGE) bash
+
+integration-test:
+	docker compose -f docker-compose.yml up --build --abort-on-container-exit --exit-code-from test
+	docker compose -f docker-compose.yml down --remove-orphans
 
 clean:
 	rm -rf build

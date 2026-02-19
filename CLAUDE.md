@@ -22,6 +22,12 @@ make shell          # open an interactive shell inside the build container
 make clean          # remove the local build/ directory
 ```
 
+Run integration tests against the NFS server in `../project`:
+```sh
+make integration-test
+```
+This starts both containers on a shared Docker network, waits for nfsd to be ready, then runs `nfsclient_integration_tests`. The server must be in `../project`.
+
 Run a single test suite by name:
 ```sh
 docker run --rm -v "$(pwd)":/src nfsclient-build \
