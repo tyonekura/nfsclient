@@ -9,6 +9,10 @@
 #include "nfs/dirop.hpp"
 #include "nfs/setattr.hpp"
 #include "nfs/readdir.hpp"
+#include "nfs/commit.hpp"
+#include "nfs/rename.hpp"
+#include "nfs/access.hpp"
+#include "nfs/fsinfo.hpp"
 
 static constexpr uint32_t NFS_PROG = 100003;
 static constexpr uint32_t NFS_VERS = 3;
@@ -83,4 +87,29 @@ nfs3::ReaddirPage NFSClient::readdir_page(const Fh3& dir,
 
 std::vector<nfs3::DirEntry3> NFSClient::readdir(const Fh3& dir, uint32_t count) {
     return nfs3::readdir(*nfs_conn_, dir, count);
+}
+
+void NFSClient::rename(const Fh3& from_dir, const std::string& from_name,
+                        const Fh3& to_dir,   const std::string& to_name) {
+    nfs3::rename(*nfs_conn_, from_dir, from_name, to_dir, to_name);
+}
+
+nfs3::CommitVerf3 NFSClient::commit(const Fh3& fh, uint64_t offset, uint32_t count) {
+    return nfs3::commit(*nfs_conn_, fh, offset, count);
+}
+
+uint32_t NFSClient::access(const Fh3& fh, uint32_t access_mask) {
+    return nfs3::access(*nfs_conn_, fh, access_mask);
+}
+
+nfs3::FsstatResult NFSClient::fsstat(const Fh3& root) {
+    return nfs3::fsstat(*nfs_conn_, root);
+}
+
+nfs3::FsinfoResult NFSClient::fsinfo(const Fh3& root) {
+    return nfs3::fsinfo(*nfs_conn_, root);
+}
+
+nfs3::PathconfResult NFSClient::pathconf(const Fh3& fh) {
+    return nfs3::pathconf(*nfs_conn_, fh);
 }

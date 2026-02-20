@@ -11,6 +11,10 @@ add_library(nfsclient_lib STATIC
     nfs/dirop.cpp
     nfs/setattr.cpp
     nfs/readdir.cpp
+    nfs/commit.cpp
+    nfs/rename.cpp
+    nfs/access.cpp
+    nfs/fsinfo.cpp
     nfs_client.cpp
 )
 

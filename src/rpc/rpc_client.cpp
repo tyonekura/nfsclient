@@ -144,36 +144,44 @@ void TcpRpcClient::sendAll(const std::vector<uint8_t>& data) {
 }
 
 std::vector<uint8_t> TcpRpcClient::recvRecord() {
-    // Read the 4-byte record mark.
-    uint8_t mark_buf[4] = {};
-    size_t received = 0;
-    while (received < 4) {
-        const ssize_t n = recv(sock_, mark_buf + received, 4 - received, 0);
-        if (n <= 0)
-            throw std::runtime_error("recv() record mark failed");
-        received += static_cast<size_t>(n);
-    }
+    // RFC 5531 §11: a record may be split across multiple fragments.
+    // Each fragment is prefixed by a 4-byte mark: bit 31 = last-fragment,
+    // bits 30-0 = fragment length.  Reassemble until last-fragment is set.
+    std::vector<uint8_t> record;
 
-    const uint32_t mark =
-        (static_cast<uint32_t>(mark_buf[0]) << 24) |
-        (static_cast<uint32_t>(mark_buf[1]) << 16) |
-        (static_cast<uint32_t>(mark_buf[2]) <<  8) |
-         static_cast<uint32_t>(mark_buf[3]);
+    for (;;) {
+        // Read the 4-byte record mark.
+        uint8_t mark_buf[4] = {};
+        size_t received = 0;
+        while (received < 4) {
+            const ssize_t n = recv(sock_, mark_buf + received, 4 - received, 0);
+            if (n <= 0)
+                throw std::runtime_error("recv() record mark failed");
+            received += static_cast<size_t>(n);
+        }
 
-    const bool     last_fragment = (mark & 0x80000000u) != 0;
-    const uint32_t frag_len      = mark & 0x7FFFFFFFu;
+        const uint32_t mark =
+            (static_cast<uint32_t>(mark_buf[0]) << 24) |
+            (static_cast<uint32_t>(mark_buf[1]) << 16) |
+            (static_cast<uint32_t>(mark_buf[2]) <<  8) |
+             static_cast<uint32_t>(mark_buf[3]);
 
-    if (!last_fragment)
-        throw std::runtime_error("Multi-fragment RPC records are not supported");
+        const bool     last_fragment = (mark & 0x80000000u) != 0;
+        const uint32_t frag_len      = mark & 0x7FFFFFFFu;
 
-    std::vector<uint8_t> record(frag_len);
-    received = 0;
-    while (received < frag_len) {
-        const ssize_t n = recv(sock_, record.data() + received,
-                               frag_len - received, 0);
-        if (n <= 0)
-            throw std::runtime_error("recv() record data failed");
-        received += static_cast<size_t>(n);
+        // Append this fragment's data to the reassembly buffer.
+        const size_t offset = record.size();
+        record.resize(offset + frag_len);
+        received = 0;
+        while (received < frag_len) {
+            const ssize_t n = recv(sock_, record.data() + offset + received,
+                                   frag_len - received, 0);
+            if (n <= 0)
+                throw std::runtime_error("recv() record data failed");
+            received += static_cast<size_t>(n);
+        }
+
+        if (last_fragment) break;
     }
 
     return record;

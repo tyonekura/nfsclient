@@ -2,8 +2,12 @@
 
 #include "nfs/nfs3_types.hpp"
 #include "nfs/nfs_error.hpp"
+#include "nfs/access.hpp"
+#include "nfs/commit.hpp"
 #include "nfs/create.hpp"
+#include "nfs/fsinfo.hpp"
 #include "nfs/readdir.hpp"
+#include "nfs/rename.hpp"
 #include "nfs/setattr.hpp"
 #include "rpc/rpc_client.hpp"
 #include "rpc/rpc_types.hpp"
@@ -86,6 +90,27 @@ public:
 
     // NFSPROC3_READDIR — all entries (auto-paginated).
     std::vector<nfs3::DirEntry3> readdir(const Fh3& dir, uint32_t count = 4096);
+
+    // NFSPROC3_RENAME (proc 14): rename from_dir/from_name to to_dir/to_name.
+    void rename(const Fh3& from_dir, const std::string& from_name,
+                const Fh3& to_dir,   const std::string& to_name);
+
+    // NFSPROC3_COMMIT (proc 21): flush unstable writes to stable storage.
+    // offset=0, count=0 means "commit everything". Returns the write verifier.
+    nfs3::CommitVerf3 commit(const Fh3& fh, uint64_t offset = 0, uint32_t count = 0);
+
+    // NFSPROC3_ACCESS (proc 4): check access permissions.
+    // Returns the granted access bitmask (ACCESS3_READ, ACCESS3_MODIFY, etc.).
+    uint32_t access(const Fh3& fh, uint32_t access_mask);
+
+    // NFSPROC3_FSSTAT (proc 18): filesystem capacity and usage.
+    nfs3::FsstatResult fsstat(const Fh3& root);
+
+    // NFSPROC3_FSINFO (proc 19): server capabilities and preferred I/O sizes.
+    nfs3::FsinfoResult fsinfo(const Fh3& root);
+
+    // NFSPROC3_PATHCONF (proc 20): POSIX pathconf values.
+    nfs3::PathconfResult pathconf(const Fh3& fh);
 
 private:
     std::string                  host_;
