@@ -4,6 +4,7 @@ add_executable(nfsclient_tests
     test_xdr.cpp
     test_rpc.cpp
     test_nfs_ops.cpp
+    test_nfs_phase1.cpp
 )
 
 target_link_libraries(nfsclient_tests

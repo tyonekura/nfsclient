@@ -1,4 +1,5 @@
 #include "mount.hpp"
+#include "nfs_error.hpp"
 #include "portmap.hpp"
 #include "../rpc/rpc_client.hpp"
 #include "../xdr/xdr.hpp"
@@ -23,8 +24,7 @@ Fh3 mnt(const std::string& host, const std::string& export_path) {
     XdrDecoder dec(reply);
     const uint32_t status = dec.get_uint32();
     if (status != 0)
-        throw std::runtime_error("MOUNT MNT3 failed, mountstat3=" +
-                                 std::to_string(status));
+        throw NfsError(status, "MOUNT MNT3 mountstat3");
 
     // fhandle3: variable-length opaque (RFC 1813 Appendix I)
     return Fh3{dec.get_opaque()};

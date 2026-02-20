@@ -1,4 +1,5 @@
 #include "write.hpp"
+#include "nfs_error.hpp"
 #include "../xdr/xdr.hpp"
 
 #include <stdexcept>
@@ -28,7 +29,7 @@ WriteResult decode_write_reply(const std::vector<uint8_t>& data) {
     // WRITE3res always carries file_wcc (wcc_data) in both OK and fail.
     skip_wcc_data(dec);
     if (status != 0)
-        throw std::runtime_error("WRITE failed, nfsstat3=" + std::to_string(status));
+        throw NfsError(status, "WRITE");
     // WRITE3resok: count(uint32), committed(uint32), verf(writeverf3 = 8 bytes fixed opaque)
     WriteResult result{};
     result.count     = dec.get_uint32();

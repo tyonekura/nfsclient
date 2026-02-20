@@ -3,9 +3,12 @@ add_library(nfsclient_lib STATIC
     rpc/rpc_client.cpp
     nfs/portmap.cpp
     nfs/mount.cpp
+    nfs/getattr.cpp
     nfs/lookup.cpp
     nfs/read.cpp
     nfs/write.cpp
+    nfs/create.cpp
+    nfs/dirop.cpp
     nfs_client.cpp
 )
 

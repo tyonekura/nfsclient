@@ -39,13 +39,24 @@ TcpRpcClient::~TcpRpcClient() {
     if (sock_ >= 0) close(sock_);
 }
 
+// ── Auth management ──────────────────────────────────────────────────────────
+
+void TcpRpcClient::set_auth_sys(const AuthSys& auth) {
+    auth_sys_ = std::make_unique<AuthSys>(auth);
+}
+
+void TcpRpcClient::clear_auth() {
+    auth_sys_.reset();
+}
+
 // ── Pure helpers (also used by unit tests) ───────────────────────────────────
 
 std::vector<uint8_t> TcpRpcClient::buildCallMessage(uint32_t xid,
                                                       uint32_t prog,
                                                       uint32_t vers,
                                                       uint32_t proc,
-                                                      const std::vector<uint8_t>& args) {
+                                                      const std::vector<uint8_t>& args,
+                                                      const AuthSys* auth) {
     XdrEncoder enc;
     enc.put_uint32(xid);
     enc.put_uint32(static_cast<uint32_t>(MsgType::CALL));
@@ -53,10 +64,26 @@ std::vector<uint8_t> TcpRpcClient::buildCallMessage(uint32_t xid,
     enc.put_uint32(prog);
     enc.put_uint32(vers);
     enc.put_uint32(proc);
-    // AUTH_NONE credential: flavor=0, body_len=0
-    enc.put_uint32(AUTH_NONE);
-    enc.put_uint32(0);
-    // AUTH_NONE verifier: flavor=0, body_len=0
+
+    if (auth) {
+        // AUTH_SYS credential body (RFC 5531 §8.1)
+        XdrEncoder cred_body;
+        cred_body.put_uint32(auth->stamp);
+        cred_body.put_string(auth->machinename);
+        cred_body.put_uint32(auth->uid);
+        cred_body.put_uint32(auth->gid);
+        cred_body.put_uint32(static_cast<uint32_t>(auth->gids.size()));
+        for (uint32_t g : auth->gids) cred_body.put_uint32(g);
+
+        enc.put_uint32(AUTH_SYS_FLAV);
+        enc.put_opaque(cred_body.release());
+    } else {
+        // AUTH_NONE credential: flavor=0, body_len=0
+        enc.put_uint32(AUTH_NONE);
+        enc.put_uint32(0);
+    }
+
+    // Verifier is always AUTH_NONE
     enc.put_uint32(AUTH_NONE);
     enc.put_uint32(0);
 
@@ -157,7 +184,8 @@ std::vector<uint8_t> TcpRpcClient::recvRecord() {
 std::vector<uint8_t> TcpRpcClient::call(uint32_t prog, uint32_t vers, uint32_t proc,
                                          const std::vector<uint8_t>& args) {
     const uint32_t my_xid = xid_++;
-    const auto msg    = buildCallMessage(my_xid, prog, vers, proc, args);
+    const auto msg    = buildCallMessage(my_xid, prog, vers, proc, args,
+                                         auth_sys_.get());
     const auto framed = addRecordMark(msg);
     sendAll(framed);
     const auto record = recvRecord();

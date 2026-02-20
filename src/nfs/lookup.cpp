@@ -1,4 +1,5 @@
 #include "lookup.hpp"
+#include "nfs_error.hpp"
 #include "../xdr/xdr.hpp"
 
 #include <stdexcept>
@@ -21,7 +22,7 @@ Fh3 decode_lookup_reply(const std::vector<uint8_t>& data) {
     const uint32_t status = dec.get_uint32();
     if (status != 0) {
         // LOOKUP3resfail: dir_attributes (post_op_attr) follows, but we just throw.
-        throw std::runtime_error("LOOKUP failed, nfsstat3=" + std::to_string(status));
+        throw NfsError(status, "LOOKUP");
     }
     // LOOKUP3resok: object fh3, obj_attributes, dir_attributes
     Fh3 fh = decode_fh3(dec);

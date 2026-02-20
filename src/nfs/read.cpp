@@ -1,4 +1,5 @@
 #include "read.hpp"
+#include "nfs_error.hpp"
 #include "../xdr/xdr.hpp"
 
 #include <stdexcept>
@@ -23,7 +24,7 @@ std::vector<uint8_t> decode_read_reply(const std::vector<uint8_t>& data) {
     // READ3res always carries file_attributes (post_op_attr) in both OK and fail.
     skip_post_op_attr(dec);
     if (status != 0)
-        throw std::runtime_error("READ failed, nfsstat3=" + std::to_string(status));
+        throw NfsError(status, "READ");
     // READ3resok: count(uint32), eof(bool/uint32), data(opaque)
     /* count */ dec.get_uint32();
     /* eof   */ dec.get_uint32();
