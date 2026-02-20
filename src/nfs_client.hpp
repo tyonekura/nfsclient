@@ -3,9 +3,13 @@
 #include "nfs/nfs3_types.hpp"
 #include "nfs/nfs_error.hpp"
 #include "nfs/create.hpp"
+#include "nfs/readdir.hpp"
+#include "nfs/setattr.hpp"
 #include "rpc/rpc_client.hpp"
 #include "rpc/rpc_types.hpp"
 
+#include <array>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -69,6 +73,19 @@ public:
 
     // NFSPROC3_RMDIR (proc 13): remove an empty directory.
     void rmdir(const Fh3& dir, const std::string& name);
+
+    // NFSPROC3_SETATTR (proc 2): set attributes on fh.
+    void setattr(const Fh3& fh, const Sattr3& attrs,
+                 const nfs3::SattrGuard3& guard = {});
+
+    // NFSPROC3_READDIR (proc 16) — single page.
+    nfs3::ReaddirPage readdir_page(const Fh3& dir,
+                                   uint64_t cookie = 0,
+                                   const std::array<uint8_t, 8>& cookieverf = {},
+                                   uint32_t count = 4096);
+
+    // NFSPROC3_READDIR — all entries (auto-paginated).
+    std::vector<nfs3::DirEntry3> readdir(const Fh3& dir, uint32_t count = 4096);
 
 private:
     std::string                  host_;

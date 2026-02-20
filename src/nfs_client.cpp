@@ -7,6 +7,8 @@
 #include "nfs/write.hpp"
 #include "nfs/create.hpp"
 #include "nfs/dirop.hpp"
+#include "nfs/setattr.hpp"
+#include "nfs/readdir.hpp"
 
 static constexpr uint32_t NFS_PROG = 100003;
 static constexpr uint32_t NFS_VERS = 3;
@@ -65,4 +67,20 @@ void NFSClient::remove(const Fh3& dir, const std::string& name) {
 
 void NFSClient::rmdir(const Fh3& dir, const std::string& name) {
     return nfs3::rmdir(*nfs_conn_, dir, name);
+}
+
+void NFSClient::setattr(const Fh3& fh, const Sattr3& attrs,
+                         const nfs3::SattrGuard3& guard) {
+    nfs3::setattr(*nfs_conn_, fh, attrs, guard);
+}
+
+nfs3::ReaddirPage NFSClient::readdir_page(const Fh3& dir,
+                                            uint64_t cookie,
+                                            const std::array<uint8_t, 8>& cookieverf,
+                                            uint32_t count) {
+    return nfs3::readdir_page(*nfs_conn_, dir, cookie, cookieverf, count);
+}
+
+std::vector<nfs3::DirEntry3> NFSClient::readdir(const Fh3& dir, uint32_t count) {
+    return nfs3::readdir(*nfs_conn_, dir, count);
 }

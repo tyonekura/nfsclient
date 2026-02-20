@@ -9,6 +9,8 @@ add_library(nfsclient_lib STATIC
     nfs/write.cpp
     nfs/create.cpp
     nfs/dirop.cpp
+    nfs/setattr.cpp
+    nfs/readdir.cpp
     nfs_client.cpp
 )
 
