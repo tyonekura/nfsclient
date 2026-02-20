@@ -15,6 +15,9 @@ add_library(nfsclient_lib STATIC
     nfs/rename.cpp
     nfs/access.cpp
     nfs/fsinfo.cpp
+    nfs/readdirplus.cpp
+    nfs/symlink.cpp
+    nfs/mknod.cpp
     nfs_client.cpp
 )
 

@@ -13,6 +13,9 @@
 #include "nfs/rename.hpp"
 #include "nfs/access.hpp"
 #include "nfs/fsinfo.hpp"
+#include "nfs/readdirplus.hpp"
+#include "nfs/symlink.hpp"
+#include "nfs/mknod.hpp"
 
 static constexpr uint32_t NFS_PROG = 100003;
 static constexpr uint32_t NFS_VERS = 3;
@@ -112,4 +115,59 @@ nfs3::FsinfoResult NFSClient::fsinfo(const Fh3& root) {
 
 nfs3::PathconfResult NFSClient::pathconf(const Fh3& fh) {
     return nfs3::pathconf(*nfs_conn_, fh);
+}
+
+std::string NFSClient::readlink(const Fh3& symlink_fh) {
+    return nfs3::readlink(*nfs_conn_, symlink_fh);
+}
+
+Fh3 NFSClient::symlink(const Fh3& dir, const std::string& name,
+                        const std::string& target, const Sattr3& attrs) {
+    return nfs3::symlink(*nfs_conn_, dir, name, target, attrs);
+}
+
+void NFSClient::link(const Fh3& file, const Fh3& link_dir,
+                     const std::string& link_name) {
+    nfs3::link(*nfs_conn_, file, link_dir, link_name);
+}
+
+Fh3 NFSClient::mknod_fifo(const Fh3& dir, const std::string& name,
+                            const Sattr3& attrs) {
+    return nfs3::mknod_fifo(*nfs_conn_, dir, name, attrs);
+}
+
+Fh3 NFSClient::mknod_socket(const Fh3& dir, const std::string& name,
+                              const Sattr3& attrs) {
+    return nfs3::mknod_socket(*nfs_conn_, dir, name, attrs);
+}
+
+Fh3 NFSClient::mknod_chr(const Fh3& dir, const std::string& name,
+                           const Sattr3& attrs, const nfs3::DeviceSpec3& spec) {
+    return nfs3::mknod_chr(*nfs_conn_, dir, name, attrs, spec);
+}
+
+Fh3 NFSClient::mknod_blk(const Fh3& dir, const std::string& name,
+                           const Sattr3& attrs, const nfs3::DeviceSpec3& spec) {
+    return nfs3::mknod_blk(*nfs_conn_, dir, name, attrs, spec);
+}
+
+nfs3::ReaddirplusPage NFSClient::readdirplus_page(
+        const Fh3& dir, uint64_t cookie,
+        const std::array<uint8_t, 8>& cookieverf,
+        uint32_t dircount, uint32_t maxcount) {
+    return nfs3::readdirplus_page(*nfs_conn_, dir, cookie, cookieverf,
+                                   dircount, maxcount);
+}
+
+std::vector<nfs3::DirEntryPlus3> NFSClient::readdirplus(
+        const Fh3& dir, uint32_t dircount, uint32_t maxcount) {
+    return nfs3::readdirplus(*nfs_conn_, dir, dircount, maxcount);
+}
+
+void NFSClient::umnt(const std::string& export_path) {
+    nfs3::umnt(host_, export_path);
+}
+
+std::vector<nfs3::ExportEntry> NFSClient::export_list() {
+    return nfs3::export_list(host_);
 }

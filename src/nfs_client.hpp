@@ -6,9 +6,13 @@
 #include "nfs/commit.hpp"
 #include "nfs/create.hpp"
 #include "nfs/fsinfo.hpp"
+#include "nfs/mount.hpp"
+#include "nfs/mknod.hpp"
 #include "nfs/readdir.hpp"
+#include "nfs/readdirplus.hpp"
 #include "nfs/rename.hpp"
 #include "nfs/setattr.hpp"
+#include "nfs/symlink.hpp"
 #include "rpc/rpc_client.hpp"
 #include "rpc/rpc_types.hpp"
 
@@ -111,6 +115,50 @@ public:
 
     // NFSPROC3_PATHCONF (proc 20): POSIX pathconf values.
     nfs3::PathconfResult pathconf(const Fh3& fh);
+
+    // ── Symlink / hardlink operations ────────────────────────────────────────
+
+    // NFSPROC3_READLINK (proc 5): read the target path of a symbolic link.
+    std::string readlink(const Fh3& symlink_fh);
+
+    // NFSPROC3_SYMLINK (proc 10): create a symlink in `dir` pointing to `target`.
+    Fh3 symlink(const Fh3& dir, const std::string& name, const std::string& target,
+                 const Sattr3& attrs = {});
+
+    // NFSPROC3_LINK (proc 15): create a hard link.
+    void link(const Fh3& file, const Fh3& link_dir, const std::string& link_name);
+
+    // ── Special file creation ────────────────────────────────────────────────
+
+    // NFSPROC3_MKNOD (proc 11): create named pipe, socket, or device file.
+    Fh3 mknod_fifo(const Fh3& dir, const std::string& name, const Sattr3& attrs = {});
+    Fh3 mknod_socket(const Fh3& dir, const std::string& name, const Sattr3& attrs = {});
+    Fh3 mknod_chr(const Fh3& dir, const std::string& name,
+                  const Sattr3& attrs, const nfs3::DeviceSpec3& spec);
+    Fh3 mknod_blk(const Fh3& dir, const std::string& name,
+                  const Sattr3& attrs, const nfs3::DeviceSpec3& spec);
+
+    // ── READDIRPLUS ──────────────────────────────────────────────────────────
+
+    // NFSPROC3_READDIRPLUS (proc 17) — single page with inline attrs and FHs.
+    nfs3::ReaddirplusPage readdirplus_page(const Fh3& dir,
+                                           uint64_t cookie = 0,
+                                           const std::array<uint8_t, 8>& cookieverf = {},
+                                           uint32_t dircount = 4096,
+                                           uint32_t maxcount = 32768);
+
+    // NFSPROC3_READDIRPLUS — all entries (auto-paginated).
+    std::vector<nfs3::DirEntryPlus3> readdirplus(const Fh3& dir,
+                                                  uint32_t dircount = 4096,
+                                                  uint32_t maxcount = 32768);
+
+    // ── MOUNT protocol extras ────────────────────────────────────────────────
+
+    // MOUNTPROC3_UMNT (proc 3): notify server of unmount.
+    void umnt(const std::string& export_path);
+
+    // MOUNTPROC3_EXPORT (proc 5): retrieve the server's export list.
+    std::vector<nfs3::ExportEntry> export_list();
 
 private:
     std::string                  host_;
