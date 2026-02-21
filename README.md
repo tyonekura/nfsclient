@@ -39,6 +39,20 @@ This spins up the NFS server and the test binary in Docker Compose, waits
 for the server to be ready, runs `nfsclient_integration_tests`, then tears
 everything down.
 
+Run the RFC 1813 compliance suite against a live NFS server:
+
+```sh
+make compliance-test
+```
+
+Or run it manually with a filter:
+
+```sh
+docker run --rm -v "$(pwd)":/src nfsclient-build \
+    ./build/tools/compliance/nfsclient_compliance \
+    --server nfsd --export / --filter WCC
+```
+
 Run a single test suite by name:
 
 ```sh
@@ -167,13 +181,21 @@ src/
   nfs_client.hpp  NFSClient facade — owns a persistent TCP connection to nfsd
 ```
 
+```
+tools/
+  compliance/     RFC 1813 compliance suite (nfsclient_compliance binary)
+                  runner.hpp/cpp — TestRunner, TestCtx, PASS/FAIL/SKIP logic
+                  test_helpers.hpp — CHECK / EXPECT_NFS_ERR macros
+                  test_*.cpp — one file per RFC section (2.1 – 2.8)
+```
+
 Each NFS operation exposes pure `encode_*` / `decode_*` functions that are
 tested entirely with hand-crafted byte buffers, without a real server.
 
 ## Roadmap
 
 - **Phase 1** ✅ Complete NFSv3 coverage (all 22 procedures + MOUNT protocol)
-- **Phase 2** RFC 1813 compliance test suite
+- **Phase 2** ✅ RFC 1813 compliance test suite
 - **Phase 3** Performance benchmark suite
 - **Phase 4** NFSv4.0 client
 - **Phase 5** RFC 7530 compliance tests
