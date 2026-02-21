@@ -1,0 +1,45 @@
+$ make compliance-test
+# (build output omitted)
+# nfsd is up, running compliance tests...
+Running compliance tests against nfsd:/
+
+[PASS] Basic.LookupExistingFile (RFC 1813 §3.3.14)
+[PASS] Basic.LookupNonExistent (RFC 1813 §3.3.14)
+[PASS] Basic.LookupOnNonDirectory (RFC 1813 §3.3.14)
+[PASS] Basic.ReadExactSize (RFC 1813 §3.3.6)
+[PASS] Basic.ReadPastEof (RFC 1813 §3.3.6)
+[PASS] Basic.WriteFileSyncCount (RFC 1813 §3.3.7)
+[PASS] Basic.WriteThenGetattr (RFC 1813 §3.3.7)
+[PASS] Basic.CreateGuardedDuplicate (RFC 1813 §3.3.8)
+[PASS] Basic.CreateExclusiveIdempotent (RFC 1813 §3.3.8)
+[PASS] Basic.RemoveNonExistent (RFC 1813 §3.3.12)
+[PASS] Basic.RenameAcrossDirectories (RFC 1813 §3.3.14)
+[PASS] WCC.WritePreOpSize (RFC 1813 §2.6)
+[PASS] WCC.WritePostOpSize (RFC 1813 §2.6)
+[PASS] WCC.CreatePostOpDirMtime (RFC 1813 §2.6)
+[PASS] WCC.RemovePostOpDirNlink (RFC 1813 §2.6)
+[PASS] Commit.UnstableWriteThenCommit (RFC 1813 §3.3.21)
+[PASS] Commit.VerifierConsistency (RFC 1813 §3.3.21)
+[PASS] Commit.FileSyncCommitted (RFC 1813 §3.3.7)
+[PASS] ExclCreate.SameVerifierIdempotent (RFC 1813 §3.3.8)
+[FAIL] ExclCreate.DiffVerifierExist (RFC 1813 §3.3.8): EXPECT_NFS_ERR(Nfsstat3::NFS3ERR_EXIST): no exception thrown
+[PASS] Attributes.MtimeAfterWrite (RFC 1813 §2.5)
+[PASS] Attributes.CtimeAfterSetattr (RFC 1813 §2.5)
+[PASS] Attributes.NlinkAfterLink (RFC 1813 §2.5)
+[FAIL] Attributes.NlinkAfterRemove (RFC 1813 §2.5): GETATTR failed, nfsstat3=70
+[PASS] Attributes.SizeAfterTruncate (RFC 1813 §2.5)
+[FAIL] Permission.SetattrMode0000Read (RFC 1813 §3.3.4): EXPECT_NFS_ERR(Nfsstat3::NFS3ERR_ACCES): no exception thrown
+[PASS] Permission.AccessOnUnreadableFile (RFC 1813 §3.3.4)
+[PASS] Permission.RootBypassReadOnly (RFC 1813 §3.3.4)
+[PASS] Stale.ReadOnDeletedFile (RFC 1813 §2.5)
+[PASS] Stale.LookupInDeletedDir (RFC 1813 §2.5)
+[PASS] EdgeCase.ZeroByteRead (RFC 1813 §3.3.6)
+[PASS] EdgeCase.ZeroByteWrite (RFC 1813 §3.3.7)
+[PASS] EdgeCase.MaxFilename255 (RFC 1813 §2.5)
+[PASS] EdgeCase.Filename256NameTooLong (RFC 1813 §2.5)
+[SKIP] EdgeCase.ReadCountGtRtmax (RFC 1813 §3.3.19): send() failed
+[SKIP] EdgeCase.ReaddirBadCookieverf (RFC 1813 §3.3.16): send() failed
+
+Results: 31 passed, 3 failed, 2 skipped out of 36 tests.
+
+Cleaning up workdir 'compliance_1'...
