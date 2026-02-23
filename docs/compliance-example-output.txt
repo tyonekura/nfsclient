@@ -22,13 +22,13 @@ Running compliance tests against nfsd:/
 [PASS] Commit.VerifierConsistency (RFC 1813 §3.3.21)
 [PASS] Commit.FileSyncCommitted (RFC 1813 §3.3.7)
 [PASS] ExclCreate.SameVerifierIdempotent (RFC 1813 §3.3.8)
-[FAIL] ExclCreate.DiffVerifierExist (RFC 1813 §3.3.8): EXPECT_NFS_ERR(Nfsstat3::NFS3ERR_EXIST): no exception thrown
+[PASS] ExclCreate.DiffVerifierExist (RFC 1813 §3.3.8)
 [PASS] Attributes.MtimeAfterWrite (RFC 1813 §2.5)
 [PASS] Attributes.CtimeAfterSetattr (RFC 1813 §2.5)
 [PASS] Attributes.NlinkAfterLink (RFC 1813 §2.5)
-[FAIL] Attributes.NlinkAfterRemove (RFC 1813 §2.5): GETATTR failed, nfsstat3=70
+[PASS] Attributes.NlinkAfterRemove (RFC 1813 §2.5)
 [PASS] Attributes.SizeAfterTruncate (RFC 1813 §2.5)
-[FAIL] Permission.SetattrMode0000Read (RFC 1813 §3.3.4): EXPECT_NFS_ERR(Nfsstat3::NFS3ERR_ACCES): no exception thrown
+[PASS] Permission.SetattrMode0000Read (RFC 1813 §3.3.4)
 [PASS] Permission.AccessOnUnreadableFile (RFC 1813 §3.3.4)
 [PASS] Permission.RootBypassReadOnly (RFC 1813 §3.3.4)
 [PASS] Stale.ReadOnDeletedFile (RFC 1813 §2.5)
@@ -37,9 +37,9 @@ Running compliance tests against nfsd:/
 [PASS] EdgeCase.ZeroByteWrite (RFC 1813 §3.3.7)
 [PASS] EdgeCase.MaxFilename255 (RFC 1813 §2.5)
 [PASS] EdgeCase.Filename256NameTooLong (RFC 1813 §2.5)
-[SKIP] EdgeCase.ReadCountGtRtmax (RFC 1813 §3.3.19): send() failed
-[SKIP] EdgeCase.ReaddirBadCookieverf (RFC 1813 §3.3.16): send() failed
+[PASS] EdgeCase.ReadCountGtRtmax (RFC 1813 §3.3.19)
+[PASS] EdgeCase.ReaddirBadCookieverf (RFC 1813 §3.3.16)
 
-Results: 31 passed, 3 failed, 2 skipped out of 36 tests.
+Results: 36 passed, 0 failed, 0 skipped out of 36 tests.
 
 Cleaning up workdir 'compliance_1'...

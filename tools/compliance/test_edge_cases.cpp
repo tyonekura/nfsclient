@@ -51,15 +51,24 @@ void test_filename_256_nametoolong(compliance::TestCtx& ctx) {
 }
 
 void test_read_count_gt_rtmax(compliance::TestCtx& ctx) {
-    // Get server's rtmax so we can request more than it supports.
+    // Get server's rtmax (and wtmax for safe chunked writes).
     nfs3::FsinfoResult info = ctx.client.fsinfo(ctx.root_fh);
     uint32_t rtmax = info.rtmax;
+    uint32_t chunk = std::min(info.wtmax, 65536u);
 
-    // Create a large file (rtmax + 4096 bytes of data).
+    // Create a large file using wtmax-bounded chunks so we stay within the
+    // server's per-request write limit.  The file must be > rtmax bytes so
+    // the subsequent read truly exercises the over-rtmax path.
     Fh3 fh = ctx.client.create(ctx.workdir_fh, "e_rtmax.txt");
     uint32_t file_size = rtmax + 4096u;
-    std::vector<uint8_t> buf(file_size, 0xAB);
-    ctx.client.write(fh, 0, Stable3::FILE_SYNC, buf.data(), buf.size());
+    std::vector<uint8_t> buf(chunk, 0xAB);
+    uint64_t written = 0;
+    while (written < file_size) {
+        uint32_t n = static_cast<uint32_t>(
+            std::min<uint64_t>(chunk, file_size - written));
+        ctx.client.write(fh, written, Stable3::FILE_SYNC, buf.data(), n);
+        written += n;
+    }
 
     // Read more than rtmax — server must either clip or honour the request.
     // Either way it must NOT error; it returns count <= requested.

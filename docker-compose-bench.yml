@@ -1,0 +1,57 @@
+services:
+  nfsd:
+    build:
+      context: ../project
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        mkdir -p /export
+        rpcbind
+        sleep 1
+        exec /app/build/nfsd --export /export --port 2049
+    networks:
+      - nfs-bench
+
+  bench:
+    build:
+      context: .
+    volumes:
+      - .:/src
+    depends_on:
+      - nfsd
+    environment:
+      NFS_SERVER: nfsd
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        cmake -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build -j$(nproc)
+        echo 'Waiting for nfsd to be ready...'
+        until bash -c 'echo > /dev/tcp/nfsd/2049' 2>/dev/null; do sleep 1; done
+        echo 'nfsd is up, running benchmarks...'
+        echo '=== Sequential Read (1 thread) ==='
+        ./build/tools/bench/nfsclient_bench \
+          --server nfsd --export / --workload seqread \
+          --bs 65536 --size 256M --threads 1 --duration 10
+        echo '=== Sequential Write (1 thread, UNSTABLE) ==='
+        ./build/tools/bench/nfsclient_bench \
+          --server nfsd --export / --workload seqwrite \
+          --bs 65536 --size 256M --threads 1 --duration 10 --stable unstable
+        echo '=== Random Read (4 threads) ==='
+        ./build/tools/bench/nfsclient_bench \
+          --server nfsd --export / --workload randread \
+          --bs 4096 --size 256M --threads 4 --duration 10
+        echo '=== Metadata: CREATE+REMOVE (4 threads) ==='
+        ./build/tools/bench/nfsclient_bench \
+          --server nfsd --export / --workload meta \
+          --threads 4 --duration 10
+    networks:
+      - nfs-bench
+
+networks:
+  nfs-bench:
+    driver: bridge

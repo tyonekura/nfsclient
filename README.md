@@ -192,11 +192,77 @@ tools/
 Each NFS operation exposes pure `encode_*` / `decode_*` functions that are
 tested entirely with hand-crafted byte buffers, without a real server.
 
+## Benchmark Suite
+
+Run all benchmark workloads against a live NFS server:
+
+```sh
+make bench-test
+```
+
+Or run a specific workload manually with custom parameters:
+
+```sh
+docker run --rm -v "$(pwd)":/src nfsclient-build \
+    ./build/tools/bench/nfsclient_bench \
+    --server nfsd --export / --workload seqread \
+    --bs 65536 --size 1G --threads 4 --duration 30
+```
+
+Supported workloads:
+
+| Workload | Description |
+|----------|-------------|
+| `seqread` | Sequential read throughput — pre-fills a file, reads it end-to-end |
+| `seqwrite` | Sequential write throughput — each thread writes its own file |
+| `randread` | Random read IOPS — uniform random block-aligned offsets |
+| `randwrite` | Random write IOPS — each thread writes random offsets into its file |
+| `meta` | Metadata IOPS — repeated CREATE+REMOVE pairs |
+| `mixed` | Mixed read/write — configurable ratio via `--rw-ratio` |
+
+Options:
+
+```
+--bs <bytes>       Block size (default 65536; supports K/M/G suffixes)
+--size <bytes>     Data file size (default 1G)
+--threads <n>      Concurrent connections/threads (default 1)
+--duration <s>     Run time in seconds (default 30)
+--stable <mode>    Write stability: unstable, datasync, filesync (default unstable)
+--rw-ratio <0-1>   Read fraction for 'mixed' workload (default 0.7)
+--csv <path>       Append results to a CSV file
+```
+
+Example output:
+
+```
+Workload : seqread
+bs       : 64.0 KiB
+size     : 256.0 MiB
+threads  : 1
+duration : 10.0 s
+
+Ops          Throughput     lat_min    lat_p50    lat_p95    lat_p99    lat_max
+───────────  ─────────────  ─────────  ─────────  ─────────  ─────────  ─────────
+3981         824.6 MB/s     0.34 ms    0.62 ms    1.21 ms    1.89 ms    4.32 ms
+```
+
+Latency vs. concurrency sweep — run the same workload at increasing thread counts and
+collect results into a single CSV for plotting:
+
+```sh
+for t in 1 2 4 8 16; do
+  docker run --rm -v "$(pwd)":/src nfsclient-build \
+    ./build/tools/bench/nfsclient_bench \
+    --server nfsd --export / --workload randread \
+    --bs 4096 --size 256M --threads $t --duration 30 --csv curve.csv
+done
+```
+
 ## Roadmap
 
 - **Phase 1** ✅ Complete NFSv3 coverage (all 22 procedures + MOUNT protocol)
 - **Phase 2** ✅ RFC 1813 compliance test suite
-- **Phase 3** Performance benchmark suite
+- **Phase 3** ✅ Performance benchmark suite
 - **Phase 4** NFSv4.0 client
 - **Phase 5** RFC 7530 compliance tests
 

@@ -16,14 +16,15 @@
 
 | Area | Status |
 |------|--------|
-| NFSv3 procedures | 3 of 22: LOOKUP, READ, WRITE |
+| NFSv3 procedures | ✅ All 22 + MOUNT protocol (MNT, UMNT, EXPORT) |
 | NFSv4 support | None |
-| MOUNT protocol | MNT only |
-| Authentication | AUTH_NONE only |
-| RPC records | Single-fragment only |
+| Authentication | ✅ AUTH_NONE and AUTH_SYS |
+| RPC records | ✅ Multi-fragment reassembly |
 | Connections | One blocking TCP connection per NFSClient |
-| Error handling | `std::runtime_error` — no NFS status code exposed |
-| Timing / statistics | None |
+| Error handling | ✅ `NfsError` with `nfsstat3` status code |
+| RFC 1813 compliance | ✅ 36 tests (34 pass, 2 skip — infrastructure) |
+| Timing / statistics | ✅ Reservoir with min/p50/p95/p99/max |
+| Benchmark workloads | ✅ seqread, seqwrite, randread, randwrite, meta, mixed |
 
 ---
 
