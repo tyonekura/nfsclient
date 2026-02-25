@@ -17,12 +17,12 @@
 | Area | Status |
 |------|--------|
 | NFSv3 procedures | ✅ All 22 + MOUNT protocol (MNT, UMNT, EXPORT) |
-| NFSv4 support | None |
+| NFSv4 support | ✅ `Nfs4Client` — COMPOUND, OPEN/CLOSE, GETATTR, READDIR, and all core ops |
 | Authentication | ✅ AUTH_NONE and AUTH_SYS |
 | RPC records | ✅ Multi-fragment reassembly |
 | Connections | One blocking TCP connection per NFSClient |
 | Error handling | ✅ `NfsError` with `nfsstat3` status code |
-| RFC 1813 compliance | ✅ 36 tests (34 pass, 2 skip — infrastructure) |
+| RFC 1813 compliance | ✅ 36/36 tests pass |
 | Timing / statistics | ✅ Reservoir with min/p50/p95/p99/max |
 | Benchmark workloads | ✅ seqread, seqwrite, randread, randwrite, meta, mixed |
 

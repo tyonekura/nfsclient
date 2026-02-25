@@ -23,5 +23,11 @@ add_library(nfsclient_lib STATIC
 
 target_include_directories(nfsclient_lib PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
+add_subdirectory(nfs4)
+
+add_library(nfsclient_nfs4_facade STATIC nfs4_client.cpp)
+target_include_directories(nfsclient_nfs4_facade PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(nfsclient_nfs4_facade PUBLIC nfsclient_nfs4_lib)
+
 add_executable(nfsclient main.cpp)
 target_link_libraries(nfsclient PRIVATE nfsclient_lib)

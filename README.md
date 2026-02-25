@@ -258,12 +258,86 @@ for t in 1 2 4 8 16; do
 done
 ```
 
+## NFSv4.0 Client
+
+`Nfs4Client` provides the same style of facade as `NFSClient` but speaks NFSv4.0
+(RFC 7530). It uses the COMPOUND procedure and manages the stateful OPEN/CLOSE lifecycle.
+
+### Quick-start
+
+```cpp
+#include "nfs4_client.hpp"
+
+Nfs4Client client("nfsserver.example.com");
+
+// Root file handle is obtained automatically in the constructor.
+Nfs4Fh root = client.root_fh();
+
+// Lookup + read
+Nfs4Fh fh   = client.lookup(root, "hello.txt");
+Nfs4File f  = client.open_read(root, "hello.txt");
+auto data   = client.read(f, 0, 4096);
+client.close(f);
+
+// Write
+Nfs4File wf = client.open_write(root, "out.txt");  // creates if absent
+client.write(wf, 0, Stable4::FILE_SYNC,
+             data.data(), static_cast<uint32_t>(data.size()));
+client.close(wf);
+
+// Directory ops
+Nfs4Fh dir = client.mkdir(root, "newdir");
+client.rename(root, "out.txt", dir, "moved.txt");
+client.remove(dir, "moved.txt");
+
+// List a directory
+for (const auto& e : client.readdir(root)) {
+    // e.name, e.cookie, e.attrs.size, e.attrs.type, ...
+}
+```
+
+### Nfs4Client API
+
+| Method | Description |
+|--------|-------------|
+| `root_fh()` | Root file handle (PUTROOTFH+GETFH, done in constructor) |
+| `lookup(dir, name)` | Resolve a name to a file handle |
+| `getattr(fh)` | Get file attributes (returns `Fattr4`) |
+| `access(fh, mask)` | Check access permissions |
+| `open_read(dir, name)` | Open existing file for reading |
+| `open_write(dir, name, create)` | Open or create file for writing |
+| `close(f)` | Close an open file |
+| `read(f, offset, count)` | Read file data |
+| `write(f, offset, stable, data, len)` | Write file data |
+| `commit(f, offset, count)` | Flush unstable writes |
+| `mkdir(dir, name)` | Create a directory |
+| `remove(dir, name)` | Delete a file or empty directory |
+| `rename(src_dir, src, dst_dir, dst)` | Rename / move |
+| `symlink(dir, name, target)` | Create a symbolic link |
+| `readlink(fh)` | Read symlink target |
+| `setattr(fh, attrs)` | Set file attributes |
+| `readdir(dir)` | List all directory entries (auto-paginated) |
+| `renew()` | Renew the client lease |
+
+### Architecture (`src/nfs4/`)
+
+Each NFSv4 operation exposes a pair of pure functions:
+
+- `encode_<op>(XdrEncoder& enc, ...)` — appends into a shared COMPOUND encoder
+- `decode_<op>_result(XdrDecoder& dec)` — reads the per-op result from the reply
+
+The COMPOUND wire format (RFC 7530 §14.2):
+```
+[tag:string] [minorversion:u32=0] [numops:u32] [op₁ op₂ … opₙ]
+```
+Note: **tag comes before minorversion**.
+
 ## Roadmap
 
 - **Phase 1** ✅ Complete NFSv3 coverage (all 22 procedures + MOUNT protocol)
 - **Phase 2** ✅ RFC 1813 compliance test suite
 - **Phase 3** ✅ Performance benchmark suite
-- **Phase 4** NFSv4.0 client
+- **Phase 4** ✅ NFSv4.0 client
 - **Phase 5** RFC 7530 compliance tests
 
 See [`docs/roadmap.md`](docs/roadmap.md) for details.

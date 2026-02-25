@@ -8,10 +8,15 @@ add_executable(nfsclient_tests
     test_nfs_p2a.cpp
     test_nfs_p2b.cpp
     test_nfs_p3.cpp
+    test_nfs4_compound.cpp
+    test_nfs4_attr.cpp
+    test_nfs4_ops.cpp
 )
 
 target_link_libraries(nfsclient_tests
     PRIVATE
+    nfsclient_nfs4_facade
+    nfsclient_nfs4_lib
     nfsclient_lib
     GTest::gtest_main
 )
