@@ -23,7 +23,7 @@
 | Connections | One blocking TCP connection per NFSClient |
 | Error handling | ✅ `NfsError` with `nfsstat3` status code |
 | RFC 1813 compliance | ✅ 36/36 tests pass |
-| RFC 7530 compliance | 🔄 In progress — `nfsclient_compliance4` binary (21 tests) |
+| RFC 7530 compliance | ✅ 22/23 tests pass (1 skipped: Linux inode cache) |
 | Timing / statistics | ✅ Reservoir with min/p50/p95/p99/max |
 | Benchmark workloads | ✅ seqread, seqwrite, randread, randwrite, meta, mixed |
 
@@ -537,6 +537,268 @@ public:
 
 ---
 
+## Phase 6 — NFSv4.1 Session Layer
+
+*NFSv4.1 (RFC 8881, obsoletes RFC 5661) is a protocol break from v4.0: the entire session
+infrastructure is mandatory. There is no way to send a minorversion=1 COMPOUND without it.
+Once the session layer is in place, all existing file ops (OPEN, READ, WRITE, GETATTR, …)
+are reused verbatim — they just get a SEQUENCE prepended.*
+
+### Protocol differences from NFSv4.0
+
+| Aspect | NFSv4.0 | NFSv4.1 |
+|--------|---------|---------|
+| Client bootstrap | SETCLIENTID + SETCLIENTID\_CONFIRM | EXCHANGE\_ID + CREATE\_SESSION |
+| Per-COMPOUND prefix | (none) | SEQUENCE (mandatory, first op) |
+| Idempotency | per-stateid seqid | per-slot replay cache in session |
+| Lease renewal | RENEW op | any COMPOUND with SEQUENCE |
+| Banned ops | — | SETCLIENTID, SETCLIENTID\_CONFIRM, OPEN\_CONFIRM, RENEW, RELEASE\_LOCKOWNER |
+| Grace period | OPEN returns NFS4ERR\_GRACE | RECLAIM\_COMPLETE required before first non-reclaim OPEN |
+
+### 6.1 EXCHANGE\_ID — RFC 8881 §18.35
+
+Replaces SETCLIENTID. Returns a `clientid4` and `sequence_id`. Key flags:
+- `EXCHGID4_FLAG_USE_NON_PNFS` — declare we are a plain (non-pNFS) client
+- `EXCHGID4_FLAG_SUPP_MOVED_REFER` — optional; skip for now
+
+### 6.2 CREATE\_SESSION — RFC 8881 §18.36
+
+Binds the clientid to a session. Negotiates:
+- `csa_fore_chan_attrs` — max request size, max response size, max ops per COMPOUND, **slot count** (depth of server-side replay cache = max outstanding requests)
+- `csa_back_chan_attrs` — same for the callback channel (set to 1 slot for now; we won't use it)
+- `csa_cb_program` — RPC program number for callbacks (can be 0 if not using delegations)
+
+Returns a 16-byte `sessionid` used in every subsequent SEQUENCE.
+
+### 6.3 SEQUENCE — RFC 8881 §18.46
+
+Must be the **first operation** in every COMPOUND sent over a session (exceptions: EXCHANGE\_ID, CREATE\_SESSION, DESTROY\_SESSION, BIND\_CONN\_TO\_SESSION themselves).
+
+Fields:
+- `sa_sessionid` — 16-byte session identifier
+- `sa_slotid` — slot index (0 … maxslot-1); start with a single slot (slotid=0) for simplicity
+- `sa_sequenceid` — monotonically increasing per-slot counter (u32, wraps)
+- `sa_highest_slotid` — highest slot currently in flight (flow control); equals `sa_slotid` for single-slot client
+- `sa_cachethis` — true if the client wants the reply cached for replay
+
+Reply includes `sr_target_highest_slotid` (server may shrink slot table dynamically).
+
+### 6.4 RECLAIM\_COMPLETE — RFC 8881 §18.51
+
+Must be sent after establishing a new session, before any non-reclaim OPEN or LOCK.
+`rca_one_fs = false` for a global reclaim-complete signal.
+Without this, the server keeps returning `NFS4ERR_GRACE` during the grace period.
+
+### 6.5 Session lifecycle ops
+
+| Op | Purpose |
+|----|---------|
+| `BIND_CONN_TO_SESSION` | Associate a new TCP connection with the session after reconnect |
+| `DESTROY_SESSION` | Graceful session teardown |
+| `DESTROY_CLIENTID` | Tear down all state for a clientid (includes all sessions) |
+| `FREE_STATEID` | Explicitly release a stateid (replaces v4.0 RELEASE\_LOCKOWNER) |
+| `TEST_STATEID` | Bulk-query stateid validity (useful after server restart) |
+
+### 6.6 `Nfs41Client` facade
+
+Mirrors `Nfs4Client` but uses the v4.1 session layer. Same file-op API surface.
+
+```cpp
+class Nfs41Client {
+public:
+    explicit Nfs41Client(const std::string& host, const AuthSys& auth = {});
+
+    Nfs4Fh  root_fh() const;
+    Nfs4Fh  lookup(const Nfs4Fh& dir, const std::string& name);
+    Fattr4  getattr(const Nfs4Fh& fh);
+    uint32_t access(const Nfs4Fh& fh, uint32_t mask);
+
+    Nfs4File open_read (const Nfs4Fh& dir, const std::string& name);
+    Nfs4File open_write(const Nfs4Fh& dir, const std::string& name, bool create = true);
+    std::vector<uint8_t> read (Nfs4File& f, uint64_t offset, uint32_t count);
+    void                 write(Nfs4File& f, uint64_t offset, Stable4 stable,
+                               const uint8_t* data, uint32_t len);
+    void close(Nfs4File& f);
+
+    Nfs4Fh mkdir (const Nfs4Fh& parent, const std::string& name);
+    void   remove(const Nfs4Fh& dir,    const std::string& name);
+    void   rename(const Nfs4Fh& src_dir, const std::string& src_name,
+                  const Nfs4Fh& dst_dir, const std::string& dst_name);
+    std::vector<DirEntry4> readdir(const Nfs4Fh& dir);
+
+    void setattr(const Nfs4Fh& fh, const Nfs4File* f, const Sattr4& attrs);
+    void commit (Nfs4File& f, uint64_t offset, uint32_t count);
+};
+```
+
+### 6.7 NFSv4.1 compliance tests (`tools/compliance41/`)
+
+| Test | What is checked |
+|------|----------------|
+| `Session.ExchangeId` | Returns valid clientid + sequence_id |
+| `Session.CreateSession` | Session established; sessionid non-zero |
+| `Session.SequenceOnEveryCompound` | SEQUENCE first op; slotid/seqid accepted |
+| `Session.ReclaimComplete` | No NFS4ERR\_GRACE after RECLAIM\_COMPLETE |
+| `Session.SlotReplay` | Re-send (slotid, seqid) pair → server replays cached reply |
+| `Session.DestroySession` | Server accepts DESTROY\_SESSION; subsequent SEQUENCE rejected |
+| `Basic41.*` | LOOKUP, READ/WRITE, mkdir/remove — reuse v4.0 test logic |
+| `Attr41.*` | fattr4 mandatory attributes — same as Phase 5 |
+| `Stateid41.*` | OPEN/READ/WRITE/CLOSE lifecycle |
+| `Rename41.*` | RENAME atomicity |
+
+---
+
+## Phase 7 — NFSv4.2 Sparse File Cluster
+
+*NFSv4.2 (RFC 7862) is fully additive on top of NFSv4.1: set `minorversion=2`, add ops
+one at a time. A server returns `NFS4ERR_NOTSUPP` for any op it does not implement, and
+the client falls back gracefully. All Phase 7 ops are independent of each other.*
+
+### 7.1 SEEK — RFC 7862 §15.11
+
+Find the next hole or data region in a sparse file (equivalent to `lseek(SEEK_HOLE/DATA)`).
+
+```
+COMPOUND([SEQUENCE, PUTFH fh, SEEK(stateid, offset, NFS4_CONTENT_DATA)])
+  → {eof: bool, offset: uint64}
+```
+
+Content directions: `NFS4_CONTENT_DATA = 0`, `NFS4_CONTENT_HOLE = 1`.
+
+Compliance tests:
+- Write data at offset 0, leave hole, write data at high offset → SEEK(DATA) and SEEK(HOLE) return correct offsets
+- SEEK past EOF → eof=true
+
+### 7.2 READ\_PLUS — RFC 7862 §15.10
+
+Superset of READ. Response is a list of segments, each either `data4` (bytes) or `data_info4` (hole: offset + length, zero wire bytes). Client falls back to READ on `NFS4ERR_NOTSUPP`.
+
+Compliance tests:
+- Read across a hole → response contains a data\_info4 segment with correct length
+- Read pure data region → identical to READ result
+- Read past EOF → eof flag set
+
+### 7.3 ALLOCATE — RFC 7862 §15.1
+
+Reserve physical storage for a byte range (`posix_fallocate()` semantics). No new state.
+
+```
+COMPOUND([SEQUENCE, PUTFH fh, ALLOCATE(stateid, offset, length)])
+```
+
+Compliance test: ALLOCATE then GETATTR → `space_used` ≥ allocated range.
+
+### 7.4 DEALLOCATE — RFC 7862 §15.3
+
+Punch a hole in a file (`fallocate(FALLOC_FL_PUNCH_HOLE)`). Server zeros the range and may reclaim backing storage.
+
+Compliance tests:
+- Write data, DEALLOCATE range, READ\_PLUS → response contains a data\_info4 hole
+- GETATTR `size` unchanged (file size not truncated, only backing storage freed)
+
+### 7.5 IO\_ADVISE — RFC 7862 §15.5
+
+Hint to server about expected access pattern (like `posix_fadvise()`). Server MAY ignore.
+Fire-and-forget; no state created.
+
+Hints: `IO_ADVISE4_NORMAL`, `IO_ADVISE4_SEQUENTIAL`, `IO_ADVISE4_RANDOM`,
+`IO_ADVISE4_WILLNEED`, `IO_ADVISE4_DONTNEED`.
+
+Compliance test: send various hints, verify no error (server may return empty granted mask).
+
+---
+
+## Phase 8 — NFSv4.2 Server-Side Copy
+
+*Server-side copy avoids sending data through the client for intra-server copies.
+Implement synchronous intra-server COPY first; async and inter-server copy are separate,
+higher-complexity items.*
+
+### 8.1 Synchronous intra-server COPY — RFC 7862 §15.2
+
+```
+COMPOUND([SEQUENCE, PUTFH src_fh, SAVEFH,
+          PUTFH dst_fh, COPY(src_stateid, dst_stateid,
+                             src_offset, dst_offset, count,
+                             ca_consecutive=true, ca_synchronous=true,
+                             [])])  ← empty netloc list = intra-server
+  → {cr_bytes_copied: uint64, cr_response: write_response4}
+```
+
+If `count=0`, copy the entire source file from `src_offset` to EOF.
+The server may copy fewer bytes than requested (short copy); client must loop.
+
+Compliance tests:
+- Create source file, fill with known data, COPY to new dest, READ dest → data identical
+- Short copy: verify client loops correctly until all bytes copied
+- COPY with count=0 → entire file copied
+
+### 8.2 CLONE — RFC 7862 §15.13 (optional)
+
+Atomic copy-on-write copy. Requires `clone_blksize` server attribute. Server-specific
+(Linux Btrfs/XFS reflinks, ONTAP). Implement opportunistically after 8.1.
+
+### 8.3 Async intra-server COPY (deferred)
+
+Adds `OFFLOAD_STATUS`, `OFFLOAD_CANCEL`, and `CB_OFFLOAD` callback. Significant
+complexity (races between COPY reply and callback). Implement after synchronous COPY
+is stable.
+
+### 8.4 Inter-server COPY (deferred)
+
+Requires `COPY_NOTIFY` to the source server and `RPCSEC_GSS` with privacy (Kerberos).
+Defer until Kerberos infrastructure is available.
+
+---
+
+## Phase 9 — pNFS (Parallel NFS)
+
+*pNFS (RFC 8881 §12) is entirely optional. A client declares non-pNFS intent via
+`EXCHGID4_FLAG_USE_NON_PNFS` in EXCHANGE\_ID and the server never grants layouts.
+Implement only after Phase 6 session layer is solid.*
+
+### Core concept
+
+The metadata server (MDS) issues layouts that map file byte ranges to data servers (DS).
+The client sends READ/WRITE directly to DS, bypassing the MDS for data I/O.
+
+### Layout operations (all OPT)
+
+| Op | Purpose |
+|----|---------|
+| `LAYOUTGET` | Request a layout for a file range |
+| `LAYOUTCOMMIT` | Flush layout-range metadata to MDS after DS writes |
+| `LAYOUTRETURN` | Return all or part of a layout |
+| `GETDEVICEINFO` | Resolve a device ID to network address(es) |
+| `GETDEVICELIST` | Enumerate all device IDs (rarely used) |
+
+### Callbacks (OPT)
+
+| Callback | Purpose |
+|----------|---------|
+| `CB_LAYOUTRECALL` | Server recalls a layout |
+| `CB_NOTIFY_DEVICEID` | Server notifies a device change |
+
+### Layout types
+
+| Type | RFC | Notes |
+|------|-----|-------|
+| `LAYOUT4_NFSV4_1_FILES` | RFC 8881 | DS speaks NFSv4.1; most common |
+| `LAYOUT4_FLEX_FILES` | RFC 8435 | Aggregates NFSv3/v4 DS; modern preference |
+| `LAYOUT4_BLOCK_VOLUME` | RFC 5663 | SAN block devices |
+| `LAYOUT4_OSD2_OBJECTS` | RFC 5664 | Object storage |
+
+### Implementation order
+
+1. `EXCHGID4_FLAG_USE_NON_PNFS` stub (already needed in Phase 6)
+2. `LAYOUTGET` + `GETDEVICEINFO` for LAYOUT4\_NFSV4\_1\_FILES
+3. Direct READ/WRITE to DS using the layout
+4. `LAYOUTCOMMIT` + `LAYOUTRETURN`
+5. `CB_LAYOUTRECALL` callback handling
+6. LAYOUT4\_FLEX\_FILES support
+
+---
+
 ## Summary Table
 
 
@@ -591,3 +853,24 @@ public:
 | 5.5 | Stale FH tests (NFSv4) | Compliance | P3 |
 | 5.6 | Byte-range locking tests | Compliance | P4 |
 | 5.7 | RENAME atomicity tests | Compliance | P4 |
+| 6.1 | EXCHANGE\_ID | Both | **P1** |
+| 6.2 | CREATE\_SESSION | Both | **P1** |
+| 6.3 | SEQUENCE (slot table) | Both | **P1** |
+| 6.4 | RECLAIM\_COMPLETE | Both | **P1** |
+| 6.5 | BIND\_CONN\_TO\_SESSION / DESTROY\_SESSION / DESTROY\_CLIENTID / FREE\_STATEID / TEST\_STATEID | Both | P2 |
+| 6.6 | `Nfs41Client` facade | Both | **P1** |
+| 6.7 | NFSv4.1 compliance tests | Compliance | P2 |
+| 7.1 | SEEK | Compliance | P2 |
+| 7.2 | READ\_PLUS | Compliance | P2 |
+| 7.3 | ALLOCATE | Compliance | P2 |
+| 7.4 | DEALLOCATE | Compliance | P2 |
+| 7.5 | IO\_ADVISE | Compliance | P3 |
+| 8.1 | Synchronous intra-server COPY | Both | P2 |
+| 8.2 | CLONE | Compliance | P3 |
+| 8.3 | Async intra-server COPY | Both | P3 |
+| 8.4 | Inter-server COPY | Both | P4 |
+| 9.1 | LAYOUTGET + GETDEVICEINFO (FILES layout) | Both | P3 |
+| 9.2 | DS direct READ/WRITE | Both | P3 |
+| 9.3 | LAYOUTCOMMIT + LAYOUTRETURN | Both | P3 |
+| 9.4 | CB\_LAYOUTRECALL callback | Both | P3 |
+| 9.5 | FLEX\_FILES layout type | Both | P4 |
