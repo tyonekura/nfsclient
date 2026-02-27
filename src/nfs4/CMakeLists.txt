@@ -15,6 +15,7 @@ add_library(nfsclient_nfs4_lib STATIC
     create.cpp
     readdir.cpp
     readlink.cpp
+    session41.cpp
 )
 
 target_include_directories(nfsclient_nfs4_lib PUBLIC

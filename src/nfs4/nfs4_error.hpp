@@ -72,6 +72,14 @@ enum class Nfsstat4 : uint32_t {
     NFS4ERR_FILE_OPEN           = 10046,
     NFS4ERR_ADMIN_REVOKED       = 10047,
     NFS4ERR_CB_PATH_DOWN        = 10048,
+    // NFSv4.1 error codes (RFC 8881 §15.1.9)
+    NFS4ERR_BADSESSION          = 10052,
+    NFS4ERR_BADSLOT             = 10053,
+    NFS4ERR_BAD_HIGH_SLOT       = 10054,
+    NFS4ERR_CONN_NOT_BOUND_TO_SESSION = 10055,
+    NFS4ERR_DEADSESSION         = 10056,
+    NFS4ERR_SEQ_FALSE_RETRY     = 10060,
+    NFS4ERR_SEQ_MISORDERED      = 10063,
 };
 
 // Exception thrown when an NFS4 operation returns a non-zero nfsstat4.

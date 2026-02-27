@@ -1,0 +1,41 @@
+services:
+  nfsd:
+    image: erichough/nfs-server
+    platform: linux/amd64
+    environment:
+      NFS_EXPORT_0: '/export *(rw,sync,no_subtree_check,no_root_squash,fsid=0,insecure)'
+    volumes:
+      - nfs-export41:/export
+    privileged: true
+    networks:
+      - nfs-compliance41
+
+  compliance41:
+    build:
+      context: .
+    volumes:
+      - .:/src
+    depends_on:
+      - nfsd
+    command:
+      - bash
+      - -c
+      - |
+        set -e
+        cmake -B build -DCMAKE_BUILD_TYPE=Debug
+        cmake --build build -j$(nproc)
+        echo 'Waiting for nfsd to be ready...'
+        until bash -c 'echo > /dev/tcp/nfsd/2049' 2>/dev/null; do sleep 1; done
+        sleep 5
+        echo 'nfsd is up, running NFSv4.1 compliance tests...'
+        exec ./build/tools/compliance41/nfsclient_compliance41 \
+          --server nfsd --export /
+    networks:
+      - nfs-compliance41
+
+volumes:
+  nfs-export41:
+
+networks:
+  nfs-compliance41:
+    driver: bridge

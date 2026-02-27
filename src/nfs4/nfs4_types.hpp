@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 
+// NFSv4.1 session ID: 16-byte opaque (RFC 8881 §2.10.3)
+using SessionId41 = std::array<uint8_t, 16>;
+
 // NFSv4 file handle: variable-length opaque, max 128 bytes (RFC 7530 §4.2.1)
 struct Nfs4Fh {
     std::vector<uint8_t> data;

@@ -10,11 +10,12 @@ static constexpr uint32_t NFS4_PROC_COMPOUND = 1;
 std::vector<uint8_t> call_compound(TcpRpcClient& rpc,
                                     const std::string& tag,
                                     const std::vector<uint8_t>& ops_bytes,
-                                    uint32_t num_ops) {
-    // Encode COMPOUND4args header: tag, minorversion=0, numops
+                                    uint32_t num_ops,
+                                    uint32_t minorversion) {
+    // Encode COMPOUND4args header: tag, minorversion, numops
     XdrEncoder hdr;
     hdr.put_string(tag);
-    hdr.put_uint32(0);        // minorversion = 0
+    hdr.put_uint32(minorversion);
     hdr.put_uint32(num_ops);
     auto hdr_bytes = hdr.release();
 

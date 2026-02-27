@@ -1,6 +1,6 @@
 IMAGE := nfsclient-build
 
-.PHONY: build test shell docker-image clean integration-test compliance-test compliance4-test bench-test
+.PHONY: build test shell docker-image clean integration-test compliance-test compliance4-test compliance41-test bench-test
 
 docker-image:
 	docker build -t $(IMAGE) .
@@ -29,6 +29,11 @@ compliance4-test:
 	docker compose -f docker-compose-compliance4.yml up \
 		--build --abort-on-container-exit --exit-code-from compliance4
 	docker compose -f docker-compose-compliance4.yml down --volumes --remove-orphans
+
+compliance41-test:
+	docker compose -f docker-compose-compliance41.yml up \
+		--build --abort-on-container-exit --exit-code-from compliance41
+	docker compose -f docker-compose-compliance41.yml down --volumes --remove-orphans
 
 bench-test:
 	docker compose -f docker-compose-bench.yml up \

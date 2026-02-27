@@ -10,7 +10,7 @@
 
 namespace nfs4 {
 
-// NFSv4 op codes (RFC 7530 §18)
+// NFSv4 op codes (RFC 7530 §18 / RFC 8881 §18)
 constexpr uint32_t OP_ACCESS               = 3;
 constexpr uint32_t OP_CLOSE                = 4;
 constexpr uint32_t OP_COMMIT               = 5;
@@ -36,11 +36,23 @@ constexpr uint32_t OP_SETCLIENTID          = 35;
 constexpr uint32_t OP_SETCLIENTID_CONFIRM  = 36;
 constexpr uint32_t OP_WRITE                = 38;
 
+// NFSv4.1 op codes (RFC 8881 §18)
+constexpr uint32_t OP_BIND_CONN_TO_SESSION = 41;
+constexpr uint32_t OP_EXCHANGE_ID          = 42;
+constexpr uint32_t OP_CREATE_SESSION       = 43;
+constexpr uint32_t OP_DESTROY_SESSION      = 44;
+constexpr uint32_t OP_FREE_STATEID         = 45;
+constexpr uint32_t OP_TEST_STATEID         = 56;
+constexpr uint32_t OP_DESTROY_CLIENTID     = 57;
+constexpr uint32_t OP_RECLAIM_COMPLETE     = 58;
+constexpr uint32_t OP_SEQUENCE             = 53;
+
 // Build and send a COMPOUND request.
 //
 // Wire format sent:
-//   [tag:string] [minorversion:u32=0] [numops:u32] [ops_bytes...]
+//   [tag:string] [minorversion:u32] [numops:u32] [ops_bytes...]
 //
+// minorversion=0 for NFSv4.0, minorversion=1 for NFSv4.1 (default 0).
 // Returns the raw reply bytes starting from COMPOUND4res.status.
 // The caller parses: outer_status(u32), tag(string), numops(u32), then per-op results.
 //
@@ -48,7 +60,8 @@ constexpr uint32_t OP_WRITE                = 38;
 std::vector<uint8_t> call_compound(TcpRpcClient& rpc,
                                     const std::string& tag,
                                     const std::vector<uint8_t>& ops_bytes,
-                                    uint32_t num_ops);
+                                    uint32_t num_ops,
+                                    uint32_t minorversion = 0);
 
 // Helper: parse the COMPOUND4res header from `reply` and return an XdrDecoder
 // positioned at the start of the resarray.  Throws Nfs4Error on outer failure.
