@@ -10,33 +10,33 @@ using namespace nfs4::attr;
 
 // ── Bitmap4 bit placement ────────────────────────────────────────────────────
 
-// Attribute N → word N/32, bit (1u << (31 - N%32))
+// Attribute N → word N/32, bit (1u << (N%32)) — LSB-first per RFC 7530 §3.3.21
 
 TEST(Nfs4Attr, Bitmap4SingleAttrType) {
-    // TYPE = 1 → word 0, bit (1u << 30) = 0x40000000
+    // TYPE = 1 → word 0, bit (1u << 1) = 0x00000002
     std::vector<uint32_t> bm;
     bitmap4_set(bm, TYPE);
     ASSERT_EQ(bm.size(), 1u);
-    EXPECT_EQ(bm[0], 0x40000000u);
+    EXPECT_EQ(bm[0], 0x00000002u);
     EXPECT_TRUE(bitmap4_test(bm, TYPE));
     EXPECT_FALSE(bitmap4_test(bm, SIZE));
 }
 
 TEST(Nfs4Attr, Bitmap4SingleAttrSize) {
-    // SIZE = 4 → word 0, bit (1u << 27) = 0x08000000
+    // SIZE = 4 → word 0, bit (1u << 4) = 0x00000010
     std::vector<uint32_t> bm;
     bitmap4_set(bm, SIZE);
     ASSERT_EQ(bm.size(), 1u);
-    EXPECT_EQ(bm[0], 0x08000000u);
+    EXPECT_EQ(bm[0], 0x00000010u);
 }
 
 TEST(Nfs4Attr, Bitmap4SingleAttrMode) {
-    // MODE = 33 → word 1 (33/32=1), bit (1u << (31 - 33%32)) = 1u<<30 = 0x40000000
+    // MODE = 33 → word 1 (33/32=1), bit (1u << (33%32)) = 1u<<1 = 0x00000002
     std::vector<uint32_t> bm;
     bitmap4_set(bm, MODE);
     ASSERT_EQ(bm.size(), 2u);
     EXPECT_EQ(bm[0], 0u);
-    EXPECT_EQ(bm[1], 0x40000000u);
+    EXPECT_EQ(bm[1], 0x00000002u);
     EXPECT_TRUE(bitmap4_test(bm, MODE));
 }
 
@@ -45,14 +45,14 @@ TEST(Nfs4Attr, Bitmap4MultipleAttrs) {
     auto bm = make_bitmap4({TYPE, SIZE, FILEID, MODE});
     ASSERT_EQ(bm.size(), 2u);
 
-    // TYPE=1: bit 30 → 0x40000000
-    // SIZE=4: bit 27 → 0x08000000
-    // FILEID=20: bit 11 → 0x00000800
-    uint32_t expected_word0 = 0x40000000u | 0x08000000u | 0x00000800u;
+    // TYPE=1: bit 1 → 0x00000002
+    // SIZE=4: bit 4 → 0x00000010
+    // FILEID=20: bit 20 → 0x00100000
+    uint32_t expected_word0 = 0x00000002u | 0x00000010u | 0x00100000u;
     EXPECT_EQ(bm[0], expected_word0);
 
-    // MODE=33: bit 30 (in word 1) → 0x40000000
-    EXPECT_EQ(bm[1], 0x40000000u);
+    // MODE=33: bit 1 (in word 1) → 0x00000002
+    EXPECT_EQ(bm[1], 0x00000002u);
 }
 
 TEST(Nfs4Attr, Bitmap4TestAbsent) {
@@ -76,11 +76,11 @@ TEST(Nfs4Attr, EncodeBitmap4) {
     ASSERT_EQ(b.size(), 8u);
     // num_words = 1
     EXPECT_EQ(b[3], 1u);
-    // word0 = TYPE | SIZE = 0x40000000 | 0x08000000 = 0x48000000
-    EXPECT_EQ(b[4], 0x48);
+    // word0 = TYPE | SIZE = 0x00000002 | 0x00000010 = 0x00000012
+    EXPECT_EQ(b[4], 0x00);
     EXPECT_EQ(b[5], 0x00);
     EXPECT_EQ(b[6], 0x00);
-    EXPECT_EQ(b[7], 0x00);
+    EXPECT_EQ(b[7], 0x12);
 }
 
 TEST(Nfs4Attr, DecodeBitmap4RoundTrip) {
@@ -112,8 +112,8 @@ static void append_u64(std::vector<uint8_t>& buf, uint64_t v) {
 
 TEST(Nfs4Attr, DecodeFattr4SizeFileid) {
     // Attributes: SIZE=4, FILEID=20
-    // bitmap: word 0 = 0x08000000 | 0x00000800
-    uint32_t bm0 = 0x08000000u | 0x00000800u;
+    // bitmap: word 0 = (1<<4) | (1<<20) = 0x00000010 | 0x00100000 = 0x00100010
+    uint32_t bm0 = (1u << 4) | (1u << 20);
 
     // attrlist: uint64(4096) + uint64(99)
     std::vector<uint8_t> attrlist;
@@ -139,8 +139,8 @@ TEST(Nfs4Attr, DecodeFattr4SizeFileid) {
 }
 
 TEST(Nfs4Attr, DecodeFattr4Type) {
-    // Attribute: TYPE=1
-    uint32_t bm0 = 0x40000000u;  // TYPE
+    // Attribute: TYPE=1 → bit 1 → 0x00000002
+    uint32_t bm0 = 0x00000002u;  // TYPE
 
     std::vector<uint8_t> attrlist;
     append_u32(attrlist, 1);  // NF4REG = 1

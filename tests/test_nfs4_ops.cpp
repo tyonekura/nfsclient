@@ -105,7 +105,7 @@ TEST(Nfs4Ops, GetAttrEncode) {
 
 TEST(Nfs4Ops, GetAttrDecodeOk) {
     // Build a reply: [resop=9][status=0][fattr4: bm with SIZE][attrlist: uint64(512)]
-    uint32_t bm0 = 1u << (31 - attr::SIZE % 32);  // SIZE=4: bit 27
+    uint32_t bm0 = 1u << (attr::SIZE % 32);  // SIZE=4: bit 4 = 0x00000010
 
     std::vector<uint8_t> attrlist;
     append_u64(attrlist, 512);

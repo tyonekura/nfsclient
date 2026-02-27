@@ -6,14 +6,14 @@ namespace nfs4 {
 
 void bitmap4_set(std::vector<uint32_t>& bm, uint32_t id) {
     uint32_t word = id / 32;
-    uint32_t bit  = 1u << (31 - (id % 32));
+    uint32_t bit  = 1u << (id % 32);
     if (bm.size() <= word) bm.resize(word + 1, 0);
     bm[word] |= bit;
 }
 
 bool bitmap4_test(const std::vector<uint32_t>& bm, uint32_t id) {
     uint32_t word = id / 32;
-    uint32_t bit  = 1u << (31 - (id % 32));
+    uint32_t bit  = 1u << (id % 32);
     if (bm.size() <= word) return false;
     return (bm[word] & bit) != 0;
 }

@@ -268,7 +268,13 @@ done
 ```cpp
 #include "nfs4_client.hpp"
 
+// AUTH_NONE (for servers that allow unauthenticated access)
 Nfs4Client client("nfsserver.example.com");
+
+// AUTH_SYS — required by Linux kernel nfsd and most production servers
+AuthSys auth{};
+auth.uid = 1000; auth.gid = 1000; auth.machinename = "myclient";
+Nfs4Client client("nfsserver.example.com", auth);
 
 // Root file handle is obtained automatically in the constructor.
 Nfs4Fh root = client.root_fh();
@@ -319,6 +325,25 @@ for (const auto& e : client.readdir(root)) {
 | `readdir(dir)` | List all directory entries (auto-paginated) |
 | `renew()` | Renew the client lease |
 
+### RFC 7530 Compliance Suite
+
+Run the NFSv4.0 compliance suite against a Linux kernel NFS server:
+
+```sh
+make compliance4-test
+```
+
+This spins up an `erichough/nfs-server` Linux kernel NFSv4 server and the compliance
+binary in Docker Compose, runs `nfsclient_compliance4`, then tears everything down.
+
+Run manually with a filter:
+
+```sh
+docker run --rm -v "$(pwd)":/src nfsclient-build \
+    ./build/tools/compliance4/nfsclient_compliance4 \
+    --server nfsd --export / --filter Attr4
+```
+
 ### Architecture (`src/nfs4/`)
 
 Each NFSv4 operation exposes a pair of pure functions:
@@ -338,6 +363,6 @@ Note: **tag comes before minorversion**.
 - **Phase 2** ✅ RFC 1813 compliance test suite
 - **Phase 3** ✅ Performance benchmark suite
 - **Phase 4** ✅ NFSv4.0 client
-- **Phase 5** RFC 7530 compliance tests
+- **Phase 5** 🔄 RFC 7530 compliance tests
 
 See [`docs/roadmap.md`](docs/roadmap.md) for details.

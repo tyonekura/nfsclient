@@ -18,17 +18,14 @@
 
 #include <chrono>
 #include <cstdint>
+#include <unistd.h>
 
 static constexpr uint32_t NFS4_PROG = 100003;
 static constexpr uint32_t NFS4_VERS = 4;
 
-// ── Constructor ───────────────────────────────────────────────────────────────
+// ── Constructor helpers (file-local) ──────────────────────────────────────────
 
-Nfs4Client::Nfs4Client(const std::string& host) : host_(host) {
-    const uint16_t port = nfs3::getport(host_, NFS4_PROG, NFS4_VERS);
-    rpc_ = std::make_unique<TcpRpcClient>(host_, port);
-
-    // Build a 8-byte verifier from current time (nanoseconds)
+static uint64_t do_setclientid_confirm(TcpRpcClient& rpc) {
     auto now = std::chrono::steady_clock::now().time_since_epoch().count();
     std::array<uint8_t, 8> verifier{};
     for (int i = 7; i >= 0; --i) {
@@ -36,36 +33,63 @@ Nfs4Client::Nfs4Client(const std::string& host) : host_(host) {
         now >>= 8;
     }
 
-    // ── SETCLIENTID ───────────────────────────────────────────────────────────
-    {
-        XdrEncoder ops;
-        nfs4::encode_setclientid(ops, verifier, "nfsclient-v4");
-        auto reply = nfs4::call_compound(*rpc_, "init", ops.release(), 1);
-        XdrDecoder dec(reply);
-        nfs4::check_compound_status(dec);
-        auto r   = nfs4::decode_setclientid_result(dec);
-        clientid_ = r.clientid;
+    XdrEncoder ops;
+    nfs4::encode_setclientid(ops, verifier, "nfsclient-v4");
+    auto reply = nfs4::call_compound(rpc, "init", ops.release(), 1);
+    XdrDecoder dec(reply);
+    nfs4::check_compound_status(dec);
+    auto r = nfs4::decode_setclientid_result(dec);
 
-        // ── SETCLIENTID_CONFIRM ───────────────────────────────────────────────
-        XdrEncoder ops2;
-        nfs4::encode_setclientid_confirm(ops2, clientid_, r.confirm_verifier);
-        auto reply2 = nfs4::call_compound(*rpc_, "init", ops2.release(), 1);
-        XdrDecoder dec2(reply2);
-        nfs4::check_compound_status(dec2);
-        nfs4::decode_setclientid_confirm_result(dec2);
-    }
+    XdrEncoder ops2;
+    nfs4::encode_setclientid_confirm(ops2, r.clientid, r.confirm_verifier);
+    auto reply2 = nfs4::call_compound(rpc, "init", ops2.release(), 1);
+    XdrDecoder dec2(reply2);
+    nfs4::check_compound_status(dec2);
+    nfs4::decode_setclientid_confirm_result(dec2);
 
-    // ── Obtain root file handle via PUTROOTFH + GETFH ────────────────────────
-    {
-        XdrEncoder ops;
+    return r.clientid;
+}
+
+// Verify root is reachable and return the root sentinel (empty FH).
+// All Nfs4Client methods treat an empty Nfs4Fh as "use PUTROOTFH" to
+// avoid PUTFH on the root FH, which Linux nfsd rejects with NFS4ERR_PERM
+// via fh_verify() while PUTROOTFH (exp_pseudoroot) bypasses that check.
+static Nfs4Fh do_get_root_fh(TcpRpcClient& rpc) {
+    XdrEncoder ops;
+    nfs4::encode_putrootfh(ops);
+    nfs4::encode_getfh(ops);
+    auto reply = nfs4::call_compound(rpc, "", ops.release(), 2);
+    XdrDecoder dec(reply);
+    nfs4::check_compound_status(dec);
+    nfs4::decode_putrootfh_result(dec);
+    nfs4::decode_getfh_result(dec);   // discard FH; we use PUTROOTFH for root ops
+    return Nfs4Fh{};                  // empty = root sentinel
+}
+
+// Encode PUTROOTFH for the root sentinel or PUTFH(fh) for any other FH.
+// decode_putfh_result() works for both because it ignores the resop value.
+static void encode_fh(XdrEncoder& ops, const Nfs4Fh& fh) {
+    if (fh.data.empty())
         nfs4::encode_putrootfh(ops);
-        nfs4::encode_getfh(ops);
-        auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
-        XdrDecoder dec(reply);
-        nfs4::check_compound_status(dec);
-        nfs4::decode_putrootfh_result(dec);
-        root_fh_ = nfs4::decode_getfh_result(dec);
-    }
+    else
+        nfs4::encode_putfh(ops, fh);
+}
+
+// ── Constructors ──────────────────────────────────────────────────────────────
+
+Nfs4Client::Nfs4Client(const std::string& host) : host_(host) {
+    const uint16_t port = nfs3::getport(host_, NFS4_PROG, NFS4_VERS);
+    rpc_      = std::make_unique<TcpRpcClient>(host_, port);
+    clientid_ = do_setclientid_confirm(*rpc_);
+    root_fh_  = do_get_root_fh(*rpc_);
+}
+
+Nfs4Client::Nfs4Client(const std::string& host, const AuthSys& auth) : host_(host) {
+    const uint16_t port = nfs3::getport(host_, NFS4_PROG, NFS4_VERS);
+    rpc_      = std::make_unique<TcpRpcClient>(host_, port);
+    rpc_->set_auth_sys(auth);    // switch to AUTH_SYS before SETCLIENTID and PUTROOTFH
+    clientid_ = do_setclientid_confirm(*rpc_);
+    root_fh_  = do_get_root_fh(*rpc_);
 }
 
 void Nfs4Client::set_auth_sys(const AuthSys& auth) { rpc_->set_auth_sys(auth); }
@@ -75,7 +99,7 @@ void Nfs4Client::clear_auth()                       { rpc_->clear_auth(); }
 
 Nfs4Fh Nfs4Client::lookup(const Nfs4Fh& dir, const std::string& name) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, dir);
+    encode_fh(ops, dir);
     nfs4::encode_lookup(ops, name);
     nfs4::encode_getfh(ops);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 3);
@@ -88,7 +112,7 @@ Nfs4Fh Nfs4Client::lookup(const Nfs4Fh& dir, const std::string& name) {
 
 Fattr4 Nfs4Client::getattr(const Nfs4Fh& fh) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, fh);
+    encode_fh(ops, fh);
     nfs4::encode_getattr(ops, {
         nfs4::attr::TYPE, nfs4::attr::CHANGE, nfs4::attr::SIZE,
         nfs4::attr::FILEID, nfs4::attr::MODE, nfs4::attr::NUMLINKS,
@@ -104,7 +128,7 @@ Fattr4 Nfs4Client::getattr(const Nfs4Fh& fh) {
 
 uint32_t Nfs4Client::access(const Nfs4Fh& fh, uint32_t mask) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, fh);
+    encode_fh(ops, fh);
     nfs4::encode_access(ops, mask);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -117,19 +141,38 @@ uint32_t Nfs4Client::access(const Nfs4Fh& fh, uint32_t mask) {
 
 Nfs4File Nfs4Client::do_open(const Nfs4Fh& dir, const std::string& name,
                               uint32_t share_access, bool create) {
+    static constexpr uint32_t NFS4ERR_GRACE = 10013;
+
     uint32_t seqid = ++open_seqid_;
 
-    XdrEncoder ops;
-    nfs4::encode_putfh(ops, dir);
-    if (create) {
-        nfs4::encode_open_create(ops, seqid, share_access,
-                                 clientid_, "nfsclient-v4", name);
-    } else {
-        nfs4::encode_open_nocreate(ops, seqid, share_access,
-                                   clientid_, "nfsclient-v4", name);
+    // Retry loop: RFC 7530 §8.6 requires clients to retry on NFS4ERR_GRACE
+    // (server in grace period after restart) using the same seqid.
+    std::vector<uint8_t> reply;
+    while (true) {
+        XdrEncoder ops;
+        encode_fh(ops, dir);
+        if (create) {
+            nfs4::encode_open_create(ops, seqid, share_access,
+                                     clientid_, "nfsclient-v4", name);
+        } else {
+            nfs4::encode_open_nocreate(ops, seqid, share_access,
+                                       clientid_, "nfsclient-v4", name);
+        }
+        nfs4::encode_getfh(ops);
+        reply = nfs4::call_compound(*rpc_, "", ops.release(), 3);
+        XdrDecoder dec(reply);
+        try {
+            nfs4::check_compound_status(dec);
+        } catch (const Nfs4Error& e) {
+            if (e.status == NFS4ERR_GRACE) {
+                ::sleep(5);
+                continue;  // retry with same seqid
+            }
+            throw;
+        }
+        // Success — re-create decoder at the start of the reply for decoding below
+        break;
     }
-    nfs4::encode_getfh(ops);
-    auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 3);
     XdrDecoder dec(reply);
     nfs4::check_compound_status(dec);
     nfs4::decode_putfh_result(dec);
@@ -145,7 +188,7 @@ Nfs4File Nfs4Client::do_open(const Nfs4Fh& dir, const std::string& name,
     if (open_res.rflags & nfs4::OPEN4_RESULT_CONFIRM) {
         uint32_t confirm_seqid = ++open_seqid_;
         XdrEncoder ops2;
-        nfs4::encode_putfh(ops2, fh);
+        encode_fh(ops2, fh);
         nfs4::encode_open_confirm(ops2, f.stateid, confirm_seqid);
         auto reply2 = nfs4::call_compound(*rpc_, "", ops2.release(), 2);
         XdrDecoder dec2(reply2);
@@ -168,7 +211,7 @@ Nfs4File Nfs4Client::open_write(const Nfs4Fh& dir, const std::string& name, bool
 
 void Nfs4Client::close(const Nfs4File& f) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, f.fh);
+    encode_fh(ops, f.fh);
     nfs4::encode_close(ops, f.seqid, f.stateid);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -182,7 +225,7 @@ void Nfs4Client::close(const Nfs4File& f) {
 std::vector<uint8_t> Nfs4Client::read(const Nfs4File& f,
                                        uint64_t offset, uint32_t count) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, f.fh);
+    encode_fh(ops, f.fh);
     nfs4::encode_read(ops, f.stateid, offset, count);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -194,7 +237,7 @@ std::vector<uint8_t> Nfs4Client::read(const Nfs4File& f,
 uint32_t Nfs4Client::write(const Nfs4File& f, uint64_t offset, Stable4 stable,
                             const uint8_t* data, uint32_t len) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, f.fh);
+    encode_fh(ops, f.fh);
     nfs4::encode_write(ops, f.stateid, offset, stable, data, len);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -206,7 +249,7 @@ uint32_t Nfs4Client::write(const Nfs4File& f, uint64_t offset, Stable4 stable,
 std::array<uint8_t, 8> Nfs4Client::commit(const Nfs4File& f,
                                             uint64_t offset, uint32_t count) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, f.fh);
+    encode_fh(ops, f.fh);
     nfs4::encode_commit(ops, offset, count);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -220,7 +263,7 @@ std::array<uint8_t, 8> Nfs4Client::commit(const Nfs4File& f,
 Nfs4Fh Nfs4Client::mkdir(const Nfs4Fh& dir, const std::string& name,
                           const nfs4::Sattr4& attrs) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, dir);
+    encode_fh(ops, dir);
     nfs4::encode_create_dir(ops, name, attrs);
     nfs4::encode_getfh(ops);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 3);
@@ -233,7 +276,7 @@ Nfs4Fh Nfs4Client::mkdir(const Nfs4Fh& dir, const std::string& name,
 
 void Nfs4Client::remove(const Nfs4Fh& dir, const std::string& name) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, dir);
+    encode_fh(ops, dir);
     nfs4::encode_remove(ops, name);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -244,11 +287,11 @@ void Nfs4Client::remove(const Nfs4Fh& dir, const std::string& name) {
 
 void Nfs4Client::rename(const Nfs4Fh& src_dir, const std::string& src_name,
                         const Nfs4Fh& dst_dir, const std::string& dst_name) {
-    // COMPOUND: PUTFH(src_dir), SAVEFH, PUTFH(dst_dir), RENAME
+    // COMPOUND: PUTFH/PUTROOTFH(src_dir), SAVEFH, PUTFH/PUTROOTFH(dst_dir), RENAME
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, src_dir);
+    encode_fh(ops, src_dir);
     nfs4::encode_savefh(ops);
-    nfs4::encode_putfh(ops, dst_dir);
+    encode_fh(ops, dst_dir);
     nfs4::encode_rename(ops, src_name, dst_name);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 4);
     XdrDecoder dec(reply);
@@ -262,7 +305,7 @@ void Nfs4Client::rename(const Nfs4Fh& src_dir, const std::string& src_name,
 Nfs4Fh Nfs4Client::symlink(const Nfs4Fh& dir, const std::string& name,
                              const std::string& target, const nfs4::Sattr4& attrs) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, dir);
+    encode_fh(ops, dir);
     nfs4::encode_create_symlink(ops, name, target, attrs);
     nfs4::encode_getfh(ops);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 3);
@@ -275,7 +318,7 @@ Nfs4Fh Nfs4Client::symlink(const Nfs4Fh& dir, const std::string& name,
 
 std::string Nfs4Client::readlink(const Nfs4Fh& fh) {
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, fh);
+    encode_fh(ops, fh);
     nfs4::encode_readlink(ops);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -288,7 +331,7 @@ void Nfs4Client::setattr(const Nfs4Fh& fh, const nfs4::Sattr4& attrs) {
     // Use anonymous stateid (all zeros) for SETATTR without open state
     Stateid4 anon{};
     XdrEncoder ops;
-    nfs4::encode_putfh(ops, fh);
+    encode_fh(ops, fh);
     nfs4::encode_setattr(ops, anon, attrs);
     auto reply = nfs4::call_compound(*rpc_, "", ops.release(), 2);
     XdrDecoder dec(reply);
@@ -306,7 +349,7 @@ std::vector<Nfs4DirEntry> Nfs4Client::readdir(const Nfs4Fh& dir) {
 
     while (true) {
         XdrEncoder ops;
-        nfs4::encode_putfh(ops, dir);
+        encode_fh(ops, dir);
         nfs4::encode_readdir(ops, cookie, cookieverf,
                              4096, 32768,
                              {nfs4::attr::TYPE, nfs4::attr::SIZE, nfs4::attr::FILEID,

@@ -24,8 +24,12 @@
 class Nfs4Client {
 public:
     // Connect to `host`, resolve its NFSv4 port, and register this client.
-    // export_path is used only to obtain the root file handle via PUTROOTFH.
+    // PUTROOTFH is sent with AUTH_NONE (works on servers that allow it).
     explicit Nfs4Client(const std::string& host);
+
+    // Same as above, but switches to AUTH_SYS credentials before PUTROOTFH+GETFH.
+    // Use this when the server requires AUTH_SYS for filesystem access (e.g. Linux nfsd).
+    Nfs4Client(const std::string& host, const AuthSys& auth);
 
     // Switch to AUTH_SYS credentials for all subsequent calls.
     void set_auth_sys(const AuthSys& auth);

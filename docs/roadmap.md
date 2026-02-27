@@ -23,6 +23,7 @@
 | Connections | One blocking TCP connection per NFSClient |
 | Error handling | ✅ `NfsError` with `nfsstat3` status code |
 | RFC 1813 compliance | ✅ 36/36 tests pass |
+| RFC 7530 compliance | 🔄 In progress — `nfsclient_compliance4` binary (21 tests) |
 | Timing / statistics | ✅ Reservoir with min/p50/p95/p99/max |
 | Benchmark workloads | ✅ seqread, seqwrite, randread, randwrite, meta, mixed |
 

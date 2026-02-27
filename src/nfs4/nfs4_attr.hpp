@@ -33,7 +33,7 @@ namespace attr {
 
 // ── Bitmap4 helpers ───────────────────────────────────────────────────────────
 
-// Attribute N lives in word N/32, bit (1u << (31 - N%32)) — big-endian within word.
+// Attribute N lives in word N/32, bit (1u << (N%32)) — LSB-first per RFC 7530 §3.3.21.
 void bitmap4_set(std::vector<uint32_t>& bm, uint32_t id);
 bool bitmap4_test(const std::vector<uint32_t>& bm, uint32_t id);
 
